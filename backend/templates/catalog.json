@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "cli": "opencode",
+      "configRel": ".config/opencode/opencode.json",
+      "multiProvider": true,
+      "shape": "ai-sdk"
+    },
+    {
+      "id": "mimocode",
+      "name": "MIMO Code",
+      "cli": "mimo",
+      "configRel": ".config/mimocode/mimocode.jsonc",
+      "multiProvider": true,
+      "shape": "ai-sdk"
+    },
+    {
+      "id": "omp",
+      "name": "Oh My Pi",
+      "cli": "omp",
+      "configRel": ".omp/agent/models.yml",
+      "multiProvider": true,
+      "shape": "omp"
+    },
+    {
+      "id": "pi",
+      "name": "pi",
+      "cli": "pi",
+      "configRel": ".pi/agent/models.json",
+      "multiProvider": true,
+      "shape": "pi"
+    },
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "cli": "claude",
+      "configRel": ".claude/settings.json",
+      "multiProvider": false,
+      "shape": "claude-env",
+      "modelSlots": [
+        { "key": "FABLE", "label": "Fable" },
+        { "key": "HAIKU", "label": "Haiku" },
+        { "key": "OPUS", "label": "Opus" },
+        { "key": "SONNET", "label": "Sonnet" }
+      ]
+    }
+  ]
+}

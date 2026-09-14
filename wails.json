@@ -1,0 +1,11 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "agent-router",
+  "outputfilename": "agent-router",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": { "name": "Agent Router" },
+  "info": { "productName": "Agent Router", "productVersion": "0.1.0" }
+}

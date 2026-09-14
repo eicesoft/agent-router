@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/fieldselect.tsx","./src/components/mappingdrawer.tsx","./src/components/providerdrawer.tsx","./src/components/sidebar.tsx","./src/lib/api.ts","./src/lib/naming.ts","./src/lib/types.ts"],"version":"5.9.3"}

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "kind": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "icon": "openai",
+      "models": [
+        "gpt-4.1",
+        "gpt-4o-mini"
+      ]
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "kind": "anthropic",
+      "baseUrl": "https://api.anthropic.com",
+      "icon": "anthropic",
+      "models": [
+        "claude-sonnet-4-5"
+      ]
+    },
+    {
+      "id": "google-gemini",
+      "name": "Google Gemini",
+      "kind": "gemini",
+      "baseUrl": "https://generativelanguage.googleapis.com",
+      "icon": "gemini",
+      "models": [
+        "gemini-2.5-pro",
+        "gemini-2.5-flash"
+      ]
+    }
+  ],
+  "aliases": {
+    "codex": "openai",
+    "claude": "anthropic",
+    "gemini": "google-gemini",
+    "google": "google-gemini"
+  }
+}
