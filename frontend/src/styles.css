@@ -10,8 +10,13 @@
     "Segoe UI",
     sans-serif;
   color: #202126;
-  background: #edeef2;
+  background: transparent;
   font-synthesis: none;
+  /* The window is full-size-content, so the webview extends under the traffic
+     lights. Columns pad by this much to keep their first row clear of them,
+     and the band above stays empty glass so it can act as a drag handle. */
+  --titlebar-height: 38px;
+  --sidebar-surface: #f1f1f2;
 }
 input {
   outline: none;
@@ -50,10 +55,16 @@ textarea,
   -webkit-user-select: text;
   user-select: text;
 }
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
 body {
   margin: 0;
   min-width: 1080px;
-  background: #edeef2;
+  background: var(--sidebar-surface);
 }
 html.agent-config-open,
 body.agent-config-open {
@@ -63,28 +74,45 @@ button {
   font: inherit;
 }
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   gap: 0;
   margin: 0;
-  background: #fff;
-  border: 0;
+  /* The gutter around the rounded content panel is the same surface as the
+     sidebar, so it reads as one continuous outer layer. */
+  background: var(--sidebar-surface);
+  border: 1px solid #ececee;
   border-radius: 0;
-  overflow: hidden;
+  align-items: flex-start;
   box-shadow: none;
 }
+/* The window is full-size-content, so the native title bar is gone and the
+   empty glass band at the top is the only drag handle left. It spans the full
+   width; the traffic lights are native window buttons composited above the
+   webview, so they still receive their own clicks. */
+.titlebar-drag {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--titlebar-height);
+  z-index: 500;
+  --wails-draggable: drag;
+}
 .icon-rail {
+  position: relative;
   width: 58px;
   flex: 0 0 58px;
   min-height: 100vh;
   border: 0;
-  border-right: 1px solid #e8e8e9;
-  background: #fff;
+  border-right: 0;
+  background: var(--sidebar-surface);
   border-radius: 0;
   display: flex;
   align-items: center;
   flex-direction: column;
-  padding: 10px 7px;
+  padding: calc(10px + var(--titlebar-height)) 7px 10px;
+  --wails-draggable: drag;
 }
 .rail-logo {
   width: 37px;
@@ -97,6 +125,31 @@ button {
   color: #18191e;
   background: #f4f4f5;
 }
+.titlebar-sidebar-toggle {
+  position: absolute;
+  top: 4px;
+  right: 11px;
+  z-index: 501;
+  width: 38px;
+  height: 34px;
+  min-width: 38px;
+  padding: 0;
+  border-radius: 9px;
+  color: #5f6067;
+  --wails-draggable: no-drag;
+}
+.icon-rail .titlebar-sidebar-toggle {
+  top: calc(var(--titlebar-height) + 4px);
+  right: 10px;
+}
+.titlebar-sidebar-toggle:hover {
+  background: #e9eaed;
+  color: #18191e;
+}
+.rail-top-spacer {
+  height: 38px;
+  flex: 0 0 38px;
+}
 .rail-divider {
   height: 1px;
   width: 30px;
@@ -108,7 +161,7 @@ button {
   border: 0;
   background: transparent;
   width: 38px;
-  height: 38px;
+  height: 34px;
   display: grid;
   place-items: center;
   border-radius: 9px;
@@ -117,16 +170,16 @@ button {
   transition: 0.15s ease;
 }
 .rail-action:hover {
-  background: #f3f3f4;
-  color: #222328;
+  background: #e9eaed;
+  color: #18191e;
 }
 .rail-action.selected {
   color: white;
   background: #202126;
 }
 .rail-action.current {
-  background: #ececf0;
-  color: #1d1e23;
+  background: #e9eaed;
+  color: #18191e;
 }
 .rail-spacer {
   flex: 1;
@@ -144,29 +197,40 @@ button {
   box-shadow: 0 0 0 3px #f0f0f1;
 }
 .sidebar {
+  position: relative;
   width: 248px;
   flex: 0 0 248px;
   min-height: 100vh;
-  background: #fff;
+  background: var(--sidebar-surface);
   border: 0;
-  border-right: 1px solid #e8e8e9;
+  /* No divider line: the floating content panel's own edge marks the split. */
+  border-right: 0;
   border-radius: 0;
   display: flex;
   flex-direction: column;
-  padding: 11px;
+  padding: calc(11px + var(--titlebar-height)) 11px 11px;
+  /* Empty sidebar space can move the window; controls opt out below. */
+  --wails-draggable: drag;
 }
-.workspace {
-  height: 40px;
-  padding: 0 6px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-weight: 650;
-  font-size: 14px;
+.sidebar button,
+.icon-rail button,
+.sidebar [data-slot="tooltip-trigger"] {
+  --wails-draggable: no-drag;
 }
-.workspace > svg {
-  margin-left: auto;
-  color: #777982;
+.resize-handle {
+  flex: 0 0 5px;
+  box-sizing: border-box;
+  margin: 0 -2px;
+  /* Sit below the drag band so dragging the sidebar never moves the window. */
+  margin-top: var(--titlebar-height);
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.15s;
+}
+.resize-handle:hover {
+  background: rgba(99, 91, 255, 0.35);
+  background-clip: content-box;
+  padding: 0 1px;
 }
 .collapse-button {
   border: 0;
@@ -232,7 +296,7 @@ button {
 }
 .nav-item {
   width: 100%;
-  height: 38px;
+  height: 34px;
   padding: 0 10px;
   border: 0;
   background: transparent;
@@ -244,16 +308,17 @@ button {
   gap: 10px !important;
   cursor: pointer;
   text-align: left;
-  font-size: 13px;
+  font-size: 14px !important;
   font-weight: 500;
 }
-.nav-item:hover {
-  background: #f5f5f6;
-}
 .nav-item.active {
-  background: #ededf0;
-  color: #1e1f24;
+  background: #e9eaed;
+  color: #18191e;
   font-weight: 650;
+}
+.nav-item:hover {
+  background: #e9eaed;
+  color: #18191e;
 }
 .nav-item.muted {
   color: #70727a;
@@ -268,10 +333,9 @@ button {
 }
 .sidebar-foot {
   margin-top: auto;
-  border-top: 1px solid #efeff0;
-  padding: 8px 9px;
+  padding: 54px 9px 0;
   color: #575a62;
-  font-size: 11px;
+  font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -299,21 +363,27 @@ button {
   background: #b8bac0;
   box-shadow: 0 0 0 3px #f0f0f1;
 }
+/* Same glass material and gutter as the sidebar, so the split reads as one
+   surface with the content card floating on it. */
 .content {
   flex: 1;
   min-width: 0;
-  min-height: 100vh;
+  min-height: 0;
+  height: calc(100vh - 12px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   position: relative;
-  background: #fff;
-  border: 0;
-  border-radius: 0;
-  padding: 24px 28px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid #e3e3e5;
+  border-radius: 12px;
+  margin: 6px 6px 6px 0;
+  padding: calc(24px + var(--titlebar-height) - 6px) 28px 18px;
 }
 header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  border-bottom: 1px solid #ededee;
   padding-bottom: 16px;
   margin-bottom: 18px;
 }
@@ -365,7 +435,7 @@ header [data-slot="button"] {
 .provider-card,
 .mapping-card,
 .agent-card {
-  background: #fff !important;
+  background: rgba(255, 255, 255, 0.42) !important;
   border: 1px solid #e8e8ea !important;
   border-radius: 10px !important;
   box-shadow: none !important;
@@ -449,6 +519,30 @@ header [data-slot="button"] {
   align-items: center;
   gap: 8px;
 }
+.route-model-list {
+  position: relative;
+  margin-top: 5px;
+  cursor: help;
+}
+.route-model-list-clip {
+  max-height: 44px;
+  overflow: hidden;
+}
+.route-model-list-clip .tag-group__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.route-model-more {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding-left: 5px;
+  color: #686a72;
+  background: #fff;
+  font-size: 12px;
+  line-height: 20px;
+}
 .status-dot {
   width: 7px;
   height: 7px;
@@ -467,6 +561,7 @@ header [data-slot="button"] {
   margin: 9px 0;
   padding: 10px 11px;
   display: flex;
+  align-items: center;
   justify-content: space-between;
   font-size: 11px;
 }
@@ -474,7 +569,15 @@ header [data-slot="button"] {
   color: #909199;
 }
 .code-box .code-box-copy[data-slot="button"] {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  transform: translateY(-50%);
   margin-top: 0;
+}
+.code-box:has(.code-box-copy) {
+  position: relative;
+  padding-right: 42px;
 }
 code {
   color: #37383e;
@@ -523,6 +626,46 @@ code {
 .mapping-arrow {
   color: #9698a0;
 }
+.mapping-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid #e7e7e9;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.mapping-group > summary::-webkit-details-marker {
+  display: none;
+}
+.mapping-group[open] > summary {
+  margin-bottom: 10px;
+}
+.mapping-group > summary > b {
+  font-size: 13px;
+  color: #2d2e33;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mapping-group-count {
+  font-size: 11px;
+  color: #6f7178;
+  background: #f2f2f3;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.mapping-group-chevron {
+  margin-left: auto;
+  color: #9698a0;
+  transition: transform 0.15s ease;
+}
+.mapping-group[open] .mapping-group-chevron {
+  transform: rotate(180deg);
+}
 .route-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -531,7 +674,7 @@ code {
 .route-card {
   border: 1px solid #e7e7e9;
   border-radius: 9px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.42);
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
@@ -635,11 +778,11 @@ code {
   font-size: 11px;
 }
 .loading {
-  min-height: 100vh;
+  min-height: calc(100vh - 12px);
   display: grid;
   place-items: center;
   color: #73757d;
-  background: #edeef2;
+  background: rgba(237, 238, 242, 0.42);
 }
 .provider-list {
   max-width: 1050px;
@@ -757,7 +900,7 @@ code {
   min-height: 142px;
   border: 1px solid #e7e7e9;
   border-radius: 9px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.42);
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -1042,7 +1185,7 @@ code {
 .provider-drawer {
   width: min(500px, 100vw);
   height: 100%;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.42);
   box-shadow: -14px 0 38px rgba(26, 27, 31, 0.16);
   display: flex;
   flex-direction: column;
@@ -1192,12 +1335,53 @@ code {
 }
 .request-log-filters {
   display: grid;
-  grid-template-columns: repeat(3, minmax(150px, 220px)) repeat(2, max-content);
+  grid-template-columns: repeat(4, minmax(140px, 200px)) repeat(2, max-content);
   align-items: end;
   gap: 8px;
 }
+.request-log-filters .select__trigger {
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  min-width: 0;
+}
+.request-log-filters .select__value {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.request-log-filters [data-slot="label"] {
+  font-size: 11px;
+}
+.request-log-filters .select__value:has(.model-option) {
+  overflow: visible;
+}
+.model-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.model-option-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-option-provider {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #6b6d75;
+}
 .content.logs-page {
-  height: 100vh;
+  height: calc(100vh - 12px);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1216,7 +1400,7 @@ code {
   flex-direction: column;
   border: 1px solid #e7e7e9;
   border-radius: 12px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.42);
   overflow: hidden;
 }
 .request-log-head {
@@ -1228,9 +1412,11 @@ code {
   min-height: 0;
   overflow: auto;
 }
+.request-log-table-wrap {
+  min-width: 100%;
+}
 .request-log-table {
   width: 100%;
-  min-width: 1180px;
   table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
@@ -1249,32 +1435,29 @@ code {
   font-size: 11px;
   font-weight: 600;
 }
-.request-log-table :is(th, td):nth-child(1) {
-  width: 72px;
+.request-log-table th {
+  position: relative;
 }
-.request-log-table :is(th, td):nth-child(2) {
-  width: 76px;
+.request-log-col-resize {
+  position: absolute;
+  top: 0;
+  right: -1px;
+  bottom: 0;
+  width: 9px;
+  cursor: col-resize;
+  user-select: none;
 }
-.request-log-table :is(th, td):nth-child(3) {
-  width: 136px;
+.request-log-col-resize::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 4px;
+  width: 1px;
+  background: transparent;
 }
-.request-log-table :is(th, td):nth-child(4) {
-  width: 90px;
-}
-.request-log-table :is(th, td):nth-child(5) {
-  width: 200px;
-}
-.request-log-table :is(th, td):nth-child(6) {
-  width: 200px;
-}
-.request-log-table :is(th, td):nth-child(7) {
-  width: 178px;
-}
-.request-log-table :is(th, td):nth-child(8) {
-  width: 72px;
-}
-.request-log-table :is(th, td):nth-child(9) {
-  width: 136px;
+.request-log-col-resize:hover::after {
+  background: #c2c4cc;
 }
 .request-log-compact-cell {
   max-width: 0;
@@ -1282,21 +1465,33 @@ code {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.request-log-compact-cell > [data-slot="tooltip-trigger"] {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+}
+.request-log-compact-cell > [data-slot="tooltip-trigger"] > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .request-log-tokens-cell {
   white-space: nowrap;
 }
-.request-log-tokens-meta {
-  margin-left: 8px;
-  color: #8a8c94;
-  font-size: 11px;
+.request-log-tokens-value {
+  cursor: default;
+  text-decoration: underline dotted #c9cbd3;
+  text-underline-offset: 3px;
 }
 .request-log-latency-cell {
   white-space: nowrap;
 }
 .request-log-input-cell,
 .request-log-output-cell {
-  width: 200px;
-  max-width: 200px;
+  min-width: 0;
+  max-width: 0;
+  overflow: hidden;
   color: #575963;
 }
 .request-log-input,
@@ -1361,12 +1556,14 @@ code {
   text-align: center !important;
 }
 .request-log-pagination {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 14px;
   color: #777983;
   font-size: 12px;
+  white-space: nowrap;
 }
 .usage-panel {
   display: grid;
@@ -1471,7 +1668,7 @@ code {
 .agent-mini-card {
   border: 1px solid #e8e8ea;
   border-radius: 11px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.42);
   padding: 14px;
   display: flex;
   flex-direction: column;
