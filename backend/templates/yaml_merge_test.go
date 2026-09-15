@@ -46,9 +46,9 @@ func TestMergeOMPPreservesOrder(t *testing.T) {
 		}
 		pos = i
 	}
-	// quoted empty apiKey stays a string
-	if !strings.Contains(out, "apiKey: \"\"") {
-		t.Errorf("apiKey should be empty string:\n%s", out)
+	// apiKey references the env var holding the gateway key
+	if !strings.Contains(out, "apiKey: AGENT_ROUTER_API_KEY") {
+		t.Errorf("apiKey should be the AGENT_ROUTER_API_KEY env var:\n%s", out)
 	}
 }
 

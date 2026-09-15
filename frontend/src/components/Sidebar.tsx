@@ -10,7 +10,7 @@ import {
   Settings2,
   SlidersHorizontal,
 } from "lucide-react";
-import { Button } from "@heroui/react";
+import { Button, Tooltip } from "@heroui/react";
 
 export type Page =
   "overview" | "providers" | "keys" | "mappings" | "agents" | "logs" | "usage";
@@ -30,6 +30,7 @@ export function Sidebar({
   keyCount,
   mappingCount,
   proxyRunning,
+  width,
 }: {
   page: Page;
   setPage: (page: Page) => void;
@@ -39,6 +40,7 @@ export function Sidebar({
   keyCount: number;
   mappingCount: number;
   proxyRunning: boolean;
+  width: number;
 }) {
   if (collapsed)
     return (
@@ -47,13 +49,13 @@ export function Sidebar({
           isIconOnly
           size="sm"
           variant="ghost"
-          className="rail-logo"
+          className="titlebar-sidebar-toggle"
           onPress={onToggle}
           aria-label="展开侧栏"
         >
           <PanelLeftOpen size={18} />
         </Button>
-        <div className="rail-divider" />
+        <div className="rail-top-spacer" />
         {items.map(([id, label, Icon]) => (
           <Button
             isIconOnly
@@ -109,21 +111,17 @@ export function Sidebar({
       </aside>
     );
   return (
-    <aside className="sidebar">
-      <div className="workspace">
-        <span className="brand-mark">A</span>
-        <span>Agent Router</span>
-        <Settings2 size={16} />
-        <Button
-          size="sm"
-          variant="ghost"
-          className="collapse-button"
-          onPress={onToggle}
-          aria-label="收缩侧栏"
-        >
-          <PanelLeftClose size={17} />
-        </Button>
-      </div>
+    <aside className="sidebar" style={{ width, flexBasis: width }}>
+      <Button
+        isIconOnly
+        size="sm"
+        variant="ghost"
+        className="titlebar-sidebar-toggle"
+        onPress={onToggle}
+        aria-label="收缩侧栏"
+      >
+        <PanelLeftClose size={17} />
+      </Button>
       <div className="nav-label nav-label-first">导航</div>
       <nav>
         {items.map(([id, label, Icon]) => (
@@ -168,11 +166,27 @@ export function Sidebar({
         使用情况
       </Button>
       <div className="sidebar-foot">
-        <div className="sidebar-foot-status">
-          <span className={proxyRunning ? "online-dot" : "online-dot off"} />
-          <span>{proxyRunning ? "本地代理运行中" : "本地代理已停止"}</span>
-        </div>
-        {proxyRunning && <small>127.0.0.1:9400</small>}
+        <Tooltip>
+          <Tooltip.Trigger>
+            <div className="sidebar-foot-status">
+              <span
+                className={proxyRunning ? "online-dot" : "online-dot off"}
+              />
+              <span>{proxyRunning ? "运行中" : "已停止"}</span>
+            </div>
+          </Tooltip.Trigger>
+          <Tooltip.Content>
+            {proxyRunning ? "监听 127.0.0.1:9400" : "本地代理已停止"}
+          </Tooltip.Content>
+        </Tooltip>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="collapse-button"
+          aria-label="设置"
+        >
+          <Settings2 size={15} />
+        </Button>
       </div>
     </aside>
   );

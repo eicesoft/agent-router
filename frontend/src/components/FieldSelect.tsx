@@ -39,7 +39,12 @@ export function FieldSelect<T extends string>({
       <Select.Popover>
         <ListBox items={options}>
           {(option) => (
-            <ListBox.Item id={option.value} textValue={String(option.label)}>
+            <ListBox.Item
+              id={option.value}
+              textValue={
+                typeof option.label === "string" ? option.label : option.value
+              }
+            >
               {option.label}
             </ListBox.Item>
           )}

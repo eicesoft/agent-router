@@ -94,6 +94,7 @@ export type RequestLog = {
   providerName: string;
   clientModel: string;
   upstreamModel: string;
+  userAgent: string;
   requestBody: string;
   responseBody: string;
   inputTokens: number;
@@ -115,6 +116,7 @@ export type RequestLogFilter = {
   token: string;
   model: string;
   provider: string;
+  status: string;
 };
 export type Bootstrap = {
   providers: Provider[];

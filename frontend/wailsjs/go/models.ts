@@ -378,6 +378,7 @@ export namespace usage {
 	    providerName: string;
 	    clientModel: string;
 	    upstreamModel: string;
+	    userAgent: string;
 	    requestBody: string;
 	    responseBody: string;
 	    inputTokens: number;
@@ -402,6 +403,7 @@ export namespace usage {
 	        this.providerName = source["providerName"];
 	        this.clientModel = source["clientModel"];
 	        this.upstreamModel = source["upstreamModel"];
+	        this.userAgent = source["userAgent"];
 	        this.requestBody = source["requestBody"];
 	        this.responseBody = source["responseBody"];
 	        this.inputTokens = source["inputTokens"];
@@ -417,6 +419,7 @@ export namespace usage {
 	    token: string;
 	    model: string;
 	    provider: string;
+	    status: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestLogFilter(source);
@@ -427,6 +430,7 @@ export namespace usage {
 	        this.token = source["token"];
 	        this.model = source["model"];
 	        this.provider = source["provider"];
+	        this.status = source["status"];
 	    }
 	}
 	export class RequestLogPage {

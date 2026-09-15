@@ -30,7 +30,7 @@ func mergeOMP(document *yaml.Node, g *Generator) {
 	providers := yamlMapping(document, "providers")
 	entry := yamlMapping(providers, g.providerName)
 	yamlSet(entry, "baseUrl", yamlScalar(g.gateway+"/v1"))
-	yamlSet(entry, "apiKey", yamlScalar(""))
+	yamlSet(entry, "apiKey", yamlScalar(envFor(g.providerName)))
 	yamlSet(entry, "api", yamlScalar("openai-completions"))
 	yamlSet(entry, "auth", yamlScalar("apiKey"))
 	yamlSet(entry, "models", ompModels(g.models()))
@@ -42,6 +42,10 @@ func ompModels(models []Model) *yaml.Node {
 		item := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 		yamlSet(item, "id", yamlScalar(m.ID))
 		yamlSet(item, "name", yamlScalar(m.Name))
+		yamlSet(item, "reasoning", yamlScalar("true"))
+		input := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle}
+		input.Content = append(input.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "text"})
+		yamlSet(item, "input", input)
 		seq.Content = append(seq.Content, item)
 	}
 	return seq

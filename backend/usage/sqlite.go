@@ -14,6 +14,7 @@ type Event struct {
 	ProviderName          string
 	ClientModel           string
 	UpstreamModel         string
+	UserAgent             string
 	RequestBody           string
 	ResponseBody          string
 	InputTokens           int
@@ -37,6 +38,7 @@ type RequestLog struct {
 	ProviderName          string `json:"providerName"`
 	ClientModel           string `json:"clientModel"`
 	UpstreamModel         string `json:"upstreamModel"`
+	UserAgent             string `json:"userAgent"`
 	RequestBody           string `json:"requestBody"`
 	ResponseBody          string `json:"responseBody"`
 	InputTokens           int    `json:"inputTokens"`
@@ -69,6 +71,8 @@ type RequestLogFilter struct {
 	Token    string `json:"token"`
 	Model    string `json:"model"`
 	Provider string `json:"provider"`
+	// Status is "success" or "failed"; empty means no status filter.
+	Status string `json:"status"`
 }
 
 type SQLiteTracker struct{ db *sql.DB }
@@ -90,7 +94,7 @@ func (t *SQLiteTracker) Record(event Event) error {
 	if _, err := tx.Exec(`INSERT INTO usage_events(created_at,provider_id,model,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message) VALUES(?,?,?,?,?,?,?,?,?,?)`, createdAt, event.ProviderID, event.ClientModel, event.InputTokens, event.OutputTokens, event.CachedInputTokens, event.ReasoningOutputTokens, event.Success, event.LatencyMS, event.ErrorMessage); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO request_logs(created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,request_body,response_body,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, createdAt, event.TokenID, event.TokenName, event.ProviderID, event.ProviderName, event.ClientModel, event.UpstreamModel, event.RequestBody, event.ResponseBody, event.InputTokens, event.OutputTokens, event.CachedInputTokens, event.ReasoningOutputTokens, event.Success, event.LatencyMS, event.ErrorMessage); err != nil {
+	if _, err := tx.Exec(`INSERT INTO request_logs(created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,request_body,response_body,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, createdAt, event.TokenID, event.TokenName, event.ProviderID, event.ProviderName, event.ClientModel, event.UpstreamModel, event.UserAgent, event.RequestBody, event.ResponseBody, event.InputTokens, event.OutputTokens, event.CachedInputTokens, event.ReasoningOutputTokens, event.Success, event.LatencyMS, event.ErrorMessage); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -100,8 +104,8 @@ func (t *SQLiteTracker) Record(event Event) error {
 // detail view, which are truncated in listings to keep IPC messages small.
 func (t *SQLiteTracker) GetRequestLog(id int64) (RequestLog, error) {
 	var item RequestLog
-	err := t.db.QueryRow(`SELECT id,created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,request_body,response_body,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message FROM request_logs WHERE id = ?`, id).
-		Scan(&item.ID, &item.CreatedAt, &item.TokenID, &item.TokenName, &item.ProviderID, &item.ProviderName, &item.ClientModel, &item.UpstreamModel, &item.RequestBody, &item.ResponseBody, &item.InputTokens, &item.OutputTokens, &item.CachedInputTokens, &item.ReasoningOutputTokens, &item.Success, &item.LatencyMS, &item.ErrorMessage)
+	err := t.db.QueryRow(`SELECT id,created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,request_body,response_body,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message FROM request_logs WHERE id = ?`, id).
+		Scan(&item.ID, &item.CreatedAt, &item.TokenID, &item.TokenName, &item.ProviderID, &item.ProviderName, &item.ClientModel, &item.UpstreamModel, &item.UserAgent, &item.RequestBody, &item.ResponseBody, &item.InputTokens, &item.OutputTokens, &item.CachedInputTokens, &item.ReasoningOutputTokens, &item.Success, &item.LatencyMS, &item.ErrorMessage)
 	if err != nil {
 		return RequestLog{}, err
 	}
@@ -129,14 +133,14 @@ func (t *SQLiteTracker) ListRequestLogs(page, pageSize int, filter RequestLogFil
 	// Bodies are truncated: two requests by full trial bodies can exceed the
 	// WebView IPC message size and truncate the callback JSON. The detail view
 	// fetches full bodies by id via GetRequestLog.
-	rows, err := t.db.Query(`SELECT id,created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,substr(request_body,1,`+previewLimit+`),substr(response_body,1,`+previewLimit+`),input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message FROM request_logs`+where+` ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?`, queryArgs...)
+	rows, err := t.db.Query(`SELECT id,created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,substr(request_body,1,`+previewLimit+`),substr(response_body,1,`+previewLimit+`),input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message FROM request_logs`+where+` ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return result, fmt.Errorf("query request logs: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var item RequestLog
-		if err := rows.Scan(&item.ID, &item.CreatedAt, &item.TokenID, &item.TokenName, &item.ProviderID, &item.ProviderName, &item.ClientModel, &item.UpstreamModel, &item.RequestBody, &item.ResponseBody, &item.InputTokens, &item.OutputTokens, &item.CachedInputTokens, &item.ReasoningOutputTokens, &item.Success, &item.LatencyMS, &item.ErrorMessage); err != nil {
+		if err := rows.Scan(&item.ID, &item.CreatedAt, &item.TokenID, &item.TokenName, &item.ProviderID, &item.ProviderName, &item.ClientModel, &item.UpstreamModel, &item.UserAgent, &item.RequestBody, &item.ResponseBody, &item.InputTokens, &item.OutputTokens, &item.CachedInputTokens, &item.ReasoningOutputTokens, &item.Success, &item.LatencyMS, &item.ErrorMessage); err != nil {
 			return result, fmt.Errorf("scan request log: %w", err)
 		}
 		result.Items = append(result.Items, item)
@@ -148,8 +152,8 @@ func (t *SQLiteTracker) ListRequestLogs(page, pageSize int, filter RequestLogFil
 }
 
 func requestLogFilterClause(filter RequestLogFilter) (string, []any) {
-	clauses := make([]string, 0, 3)
-	args := make([]any, 0, 5)
+	clauses := make([]string, 0, 4)
+	args := make([]any, 0, 6)
 	if value := strings.TrimSpace(filter.Token); value != "" {
 		clauses = append(clauses, `(token_id LIKE ? OR token_name LIKE ?)`)
 		pattern := "%" + value + "%"
@@ -164,11 +168,16 @@ func requestLogFilterClause(filter RequestLogFilter) (string, []any) {
 		pattern := "%" + value + "%"
 		args = append(args, pattern, pattern)
 	}
+	if value := strings.TrimSpace(filter.Status); value != "" {
+		clauses = append(clauses, `success = ?`)
+		args = append(args, value == "success")
+	}
 	if len(clauses) == 0 {
 		return "", args
 	}
 	return " WHERE " + strings.Join(clauses, " AND "), args
 }
+
 // UsageStat aggregates a dimension (provider or model) over all recorded events.
 // Name is an optional display label overridden by the UI; providers and models
 // carry only Key, per-key stats carry both.
@@ -189,6 +198,7 @@ func (t *SQLiteTracker) UsageByProvider() []UsageStat {
 func (t *SQLiteTracker) UsageByModel() []UsageStat {
 	return t.usageByDimension("model")
 }
+
 // UsageByKey aggregates request counts and tokens per local API key, using
 // token_id as the durable group key and token_name as the display name. Key id
 // wins over name so renamed keys stay grouped.
@@ -212,7 +222,7 @@ func (t *SQLiteTracker) UsageByKey() []UsageStat {
 	return stats
 }
 func (t *SQLiteTracker) usageByDimension(column string) []UsageStat {
-	rows, err := t.db.Query(`SELECT `+column+`,COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM usage_events WHERE `+column+`<>'' GROUP BY `+column+` ORDER BY COUNT(*) DESC, `+column)
+	rows, err := t.db.Query(`SELECT ` + column + `,COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM usage_events WHERE ` + column + `<>'' GROUP BY ` + column + ` ORDER BY COUNT(*) DESC, ` + column)
 	if err != nil {
 		return []UsageStat{}
 	}

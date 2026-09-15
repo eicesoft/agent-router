@@ -146,7 +146,7 @@ func gatewayBody(g *Generator) []byte {
 	providers := yamlMapping(document, "providers")
 	entry := yamlMapping(providers, g.providerName)
 	yamlSet(entry, "baseUrl", yamlScalar(g.gateway+"/v1"))
-	yamlSet(entry, "apiKey", yamlScalar(""))
+	yamlSet(entry, "apiKey", yamlScalar(envFor(g.providerName)))
 	yamlSet(entry, "api", yamlScalar("openai-completions"))
 	yamlSet(entry, "auth", yamlScalar("apiKey"))
 	yamlSet(entry, "models", ompModels(g.routable))
@@ -199,7 +199,9 @@ func mergePI(document *doc, g *Generator) {
 	providers.set(g.providerName, ordered(
 		"baseUrl", g.gateway+"/v1",
 		"api", "openai-completions",
-		"apiKey", "",
+		// pi treats a bare uppercase value as a literal key; the $ prefix makes
+		// it interpolate AGENT_ROUTER_API_KEY from the environment.
+		"apiKey", "$"+envFor(g.providerName),
 		"models", piModels(g.models()),
 	))
 	document.set("defaultProvider", g.providerName)

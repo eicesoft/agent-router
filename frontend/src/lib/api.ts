@@ -209,7 +209,7 @@ export async function fetchProviderModels(
 export async function listRequestLogs(
   page: number,
   pageSize = 20,
-  filter: RequestLogFilter = { token: "", model: "", provider: "" },
+  filter: RequestLogFilter = { token: "", model: "", provider: "", status: "" },
 ): Promise<RequestLogPage> {
   const app = (window as any).go?.main?.App;
   if (!app) {

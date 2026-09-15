@@ -10,6 +10,14 @@
       "shape": "ai-sdk"
     },
     {
+      "id": "kilo",
+      "name": "KiloCode",
+      "cli": "kilo",
+      "configRel": ".config/kilo/kilo.jsonc",
+      "multiProvider": true,
+      "shape": "ai-sdk"
+    },
+    {
       "id": "mimocode",
       "name": "MIMO Code",
       "cli": "mimo",

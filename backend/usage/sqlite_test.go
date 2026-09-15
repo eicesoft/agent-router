@@ -58,3 +58,35 @@ func TestListRequestLogsFiltersSavedNames(t *testing.T) {
 		t.Fatalf("unexpected filtered logs: %+v", page)
 	}
 }
+
+func TestListRequestLogsFiltersStatus(t *testing.T) {
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "agent-router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tracker := NewSQLiteTracker(db)
+	for _, event := range []Event{
+		{TokenID: "key-dev", ClientModel: "chat", Success: true},
+		{TokenID: "key-prod", ClientModel: "reasoner", Success: false},
+	} {
+		if err := tracker.Record(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		status string
+		want   int
+	}{{"failed", 1}, {"success", 1}, {"", 2}} {
+		page, err := tracker.ListRequestLogs(1, 20, RequestLogFilter{Status: tc.status})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if page.Total != tc.want {
+			t.Fatalf("status %q: got %d logs, want %d", tc.status, page.Total, tc.want)
+		}
+		if tc.status != "" && len(page.Items) == 1 && page.Items[0].Success != (tc.status == "success") {
+			t.Fatalf("status %q: unexpected items %+v", tc.status, page.Items)
+		}
+	}
+}
