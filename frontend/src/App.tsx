@@ -24,6 +24,7 @@ import {
   BrainCircuit,
   type LucideIcon,
   Box,
+  ChevronDown,
   Copy,
   Eye,
   EyeOff,
@@ -119,6 +120,19 @@ function TokenValue({
   );
 }
 const requestLogPageSize = 15;
+const LOG_COLUMNS = [
+  "状态",
+  "密钥",
+  "客户端",
+  "模型",
+  "提供商",
+  "输入",
+  "输出",
+  "Tokens",
+  "耗时",
+  "时间",
+];
+const LOG_COLUMN_WIDTHS = [72, 76, 150, 136, 90, 200, 200, 140, 72, 168];
 const pageMeta: Record<Page, { title: string; description: string }> = {
   overview: {
     title: "控制台概览",
@@ -166,12 +180,15 @@ async function copyToClipboard(value: string): Promise<boolean> {
 export default function App() {
   const [page, setPage] = useState<Page>("overview");
   const [collapsed, setCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(248);
+  const resizing = useRef(false);
   const [data, setData] = useState<Bootstrap | null>(null);
   const [requestLogs, setRequestLogs] = useState<RequestLogPage | null>(null);
   const [logFilter, setLogFilter] = useState<RequestLogFilter>({
     token: "",
     model: "",
     provider: "",
+    status: "",
   });
   const [proxyRunning, setProxyRunningState] = useState(true);
   const [togglingProxy, setTogglingProxy] = useState(false);
@@ -197,6 +214,24 @@ export default function App() {
     if (page !== "logs") return;
     listRequestLogs(1, requestLogPageSize, logFilter).then(setRequestLogs);
   }, [page]);
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!resizing.current) return;
+      e.preventDefault();
+      setSidebarWidth(Math.min(480, Math.max(190, e.clientX)));
+    };
+    const onUp = () => {
+      resizing.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
   if (!data) return <main className="loading">正在加载 Agent Router…</main>;
   const setProvider = async (id: string, enabled: boolean) => {
     await toggleProvider(id, enabled);
@@ -329,6 +364,7 @@ export default function App() {
   };
   return (
     <div className="app-shell">
+      <div className="titlebar-drag" aria-hidden="true" />
       <Sidebar
         page={page}
         setPage={setPage}
@@ -338,7 +374,19 @@ export default function App() {
         keyCount={data.apiKeys.filter((k) => k.enabled).length}
         mappingCount={ensuredMappings.filter((m) => m.enabled).length}
         proxyRunning={proxyRunning}
+        width={sidebarWidth}
       />
+      {!collapsed && (
+        <div
+          className="resize-handle"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            resizing.current = true;
+            document.body.style.cursor = "col-resize";
+            document.body.style.userSelect = "none";
+          }}
+        />
+      )}
       <main className={page === "logs" ? "content logs-page" : "content"}>
         <header>
           <div>
@@ -415,7 +463,12 @@ export default function App() {
               );
             }}
             onReset={() => {
-              const empty = { token: "", model: "", provider: "" };
+              const empty = {
+                token: "",
+                model: "",
+                provider: "",
+                status: "",
+              };
               setLogFilter(empty);
               void listRequestLogs(1, requestLogPageSize, empty).then(
                 setRequestLogs,
@@ -585,6 +638,35 @@ function RequestLogs({
   onReset: () => void;
   onPageChange: (page: number) => void;
 }) {
+  const [colWidths, setColWidths] = useState(LOG_COLUMN_WIDTHS);
+  const drag = useRef<{
+    index: number;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const active = drag.current;
+      if (!active) return;
+      e.preventDefault();
+      const width = Math.max(60, active.startWidth + e.clientX - active.startX);
+      setColWidths((prev) =>
+        prev.map((value, i) => (i === active.index ? width : value)),
+      );
+    };
+    const onUp = () => {
+      drag.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+  const tableWidth = colWidths.reduce((sum, width) => sum + width, 0);
   const [selectedPayload, setSelectedPayload] = useState<{
     content: string;
     model: string;
@@ -602,6 +684,7 @@ function RequestLogs({
     if (selectedPayload?.kind !== "输出") return;
     if (await copyToClipboard(selectedPayload.content)) setCopiedOutput(true);
   };
+
   if (!logs) return <div className="loading">正在加载请求日志…</div>;
   return (
     <section className="request-log-panel">
@@ -622,7 +705,15 @@ function RequestLogs({
           onChange={(key) => onFilterChange({ ...filter, model: key ?? "" })}
           options={models.map((m) => ({
             value: m.clientModel,
-            label: m.clientModel,
+            label: (
+              <span className="model-option">
+                <span className="model-option-name">{m.clientModel}</span>
+                <span className="model-option-provider">
+                  {providers.find((p) => p.id === m.providerId)?.name ??
+                    "未知提供商"}
+                </span>
+              </span>
+            ),
           }))}
         />
         <FieldSelect
@@ -636,6 +727,17 @@ function RequestLogs({
             label: p.name,
           }))}
         />
+        <FieldSelect
+          label="状态"
+          placeholder="选择状态"
+          isClearable
+          value={filter.status || null}
+          onChange={(key) => onFilterChange({ ...filter, status: key ?? "" })}
+          options={[
+            { value: "success", label: "成功" },
+            { value: "failed", label: "失败" },
+          ]}
+        />
         <Button size="sm" variant="primary" onPress={onSearch}>
           查询
         </Button>
@@ -645,21 +747,39 @@ function RequestLogs({
       </div>
       <div className="request-log-card">
         <div className="request-log-head" ref={headRef}>
-          <table className="request-log-table">
-            <thead>
-              <tr>
-                <th>状态</th>
-                <th>Token</th>
-                <th>模型</th>
-                <th>提供商</th>
-                <th>输入</th>
-                <th>输出</th>
-                <th>Tokens</th>
-                <th>耗时</th>
-                <th>时间</th>
-              </tr>
-            </thead>
-          </table>
+          <div className="request-log-table-wrap" style={{ width: tableWidth }}>
+            <table className="request-log-table">
+              <colgroup>
+                {colWidths.map((width, index) => (
+                  <col key={LOG_COLUMNS[index]} style={{ width }} />
+                ))}
+              </colgroup>
+              <thead>
+                <tr>
+                  {LOG_COLUMNS.map((label, index) => (
+                    <th key={label}>
+                      {label}
+                      <span
+                        className="request-log-col-resize"
+                        role="separator"
+                        aria-label={`调整${label}列宽`}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          drag.current = {
+                            index,
+                            startX: e.clientX,
+                            startWidth: colWidths[index],
+                          };
+                          document.body.style.cursor = "col-resize";
+                          document.body.style.userSelect = "none";
+                        }}
+                      />
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+            </table>
+          </div>
         </div>
         <div
           className="request-log-body"
@@ -669,121 +789,183 @@ function RequestLogs({
               headRef.current.scrollLeft = e.currentTarget.scrollLeft;
           }}
         >
-          <table className="request-log-table">
-            <tbody>
-              {logs.items.map((log) => (
-                <tr key={log.id}>
-                  <td>
-                    <Chip
-                      size="sm"
-                      color={log.success ? "success" : "danger"}
-                      variant="soft"
-                    >
-                      {log.success ? "成功" : "失败"}
-                    </Chip>
-                  </td>
-                  <td
-                    className="request-log-compact-cell"
-                    title={log.tokenName || log.tokenId}
-                  >
-                    <span>{log.tokenName || log.tokenId || "—"}</span>
-                  </td>
-                  <td
-                    className="request-log-compact-cell"
-                    title={log.clientModel}
-                  >
-                    <span>{log.clientModel}</span>
-                  </td>
-                  <td
-                    className="request-log-compact-cell"
-                    title={log.providerName || log.providerId}
-                  >
-                    {log.providerName || log.providerId}
-                  </td>
-                  <td className="request-log-input-cell">
-                    <div className="request-log-input">
-                      <Button
-                        isIconOnly
+          <div className="request-log-table-wrap" style={{ width: tableWidth }}>
+            <table className="request-log-table">
+              <colgroup>
+                {colWidths.map((width, index) => (
+                  <col key={LOG_COLUMNS[index]} style={{ width }} />
+                ))}
+              </colgroup>
+              <tbody>
+                {logs.items.map((log) => (
+                  <tr key={log.id}>
+                    <td>
+                      <Chip
                         size="sm"
-                        variant="ghost"
-                        className="request-log-input-action"
-                        aria-label="查看完整输入"
-                        onPress={() => {
-                          setSelectedPayload({
-                            content: log.requestBody,
-                            model: log.clientModel,
-                            kind: "输入",
-                          });
-                          void getRequestLog(log.id).then((full) =>
+                        color={log.success ? "success" : "danger"}
+                        variant="soft"
+                      >
+                        {log.success ? "成功" : "失败"}
+                      </Chip>
+                    </td>
+                    <td className="request-log-compact-cell">
+                      {log.tokenName || log.tokenId ? (
+                        <Tooltip>
+                          <Tooltip.Trigger>
+                            <span title={log.tokenName || log.tokenId}>
+                              {log.tokenName || log.tokenId}
+                            </span>
+                          </Tooltip.Trigger>
+                          <Tooltip.Content>
+                            {log.tokenName || log.tokenId}
+                          </Tooltip.Content>
+                        </Tooltip>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="request-log-compact-cell">
+                      {log.userAgent ? (
+                        <Tooltip>
+                          <Tooltip.Trigger>
+                            <span title={log.userAgent}>{log.userAgent}</span>
+                          </Tooltip.Trigger>
+                          <Tooltip.Content>{log.userAgent}</Tooltip.Content>
+                        </Tooltip>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="request-log-compact-cell">
+                      {log.clientModel ? (
+                        <Tooltip>
+                          <Tooltip.Trigger>
+                            <span
+                              title={
+                                log.upstreamModel &&
+                                log.upstreamModel !== log.clientModel
+                                  ? `${log.clientModel} → ${log.upstreamModel}`
+                                  : undefined
+                              }
+                            >
+                              {log.clientModel}
+                            </span>
+                          </Tooltip.Trigger>
+                          <Tooltip.Content>{log.clientModel}</Tooltip.Content>
+                        </Tooltip>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="request-log-compact-cell">
+                      {log.providerName || log.providerId ? (
+                        <Tooltip>
+                          <Tooltip.Trigger>
+                            <span title={log.providerName || log.providerId}>
+                              {log.providerName || log.providerId}
+                            </span>
+                          </Tooltip.Trigger>
+                          <Tooltip.Content>
+                            {log.providerName || log.providerId}
+                          </Tooltip.Content>
+                        </Tooltip>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="request-log-input-cell">
+                      <div className="request-log-input">
+                        <Button
+                          isIconOnly
+                          size="sm"
+                          variant="ghost"
+                          className="request-log-input-action"
+                          aria-label="查看完整输入"
+                          onPress={() => {
                             setSelectedPayload({
-                              content: full.requestBody,
-                              model: full.clientModel,
+                              content: log.requestBody,
+                              model: log.clientModel,
                               kind: "输入",
-                            }),
-                          );
-                        }}
-                      >
-                        <Eye size={15} />
-                      </Button>
-                      <span className="request-log-input-preview">
-                        {requestPreview(log.requestBody, "input")}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="request-log-output-cell">
-                    <div className="request-log-output">
-                      <Button
-                        isIconOnly
-                        size="sm"
-                        variant="ghost"
-                        className="request-log-output-action"
-                        aria-label="查看完整输出"
-                        onPress={() => {
-                          setSelectedPayload({
-                            content: log.responseBody || log.errorMessage,
-                            model: log.clientModel,
-                            kind: "输出",
-                          });
-                          void getRequestLog(log.id).then((full) =>
+                            });
+                            void getRequestLog(log.id).then((full) =>
+                              setSelectedPayload({
+                                content: full.requestBody,
+                                model: full.clientModel,
+                                kind: "输入",
+                              }),
+                            );
+                          }}
+                        >
+                          <Eye size={15} />
+                        </Button>
+                        <span className="request-log-input-preview">
+                          {requestPreview(log.requestBody, "input")}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="request-log-output-cell">
+                      <div className="request-log-output">
+                        <Button
+                          isIconOnly
+                          size="sm"
+                          variant="ghost"
+                          className="request-log-output-action"
+                          aria-label="查看完整输出"
+                          onPress={() => {
                             setSelectedPayload({
-                              content: full.responseBody || full.errorMessage,
-                              model: full.clientModel,
+                              content: log.responseBody || log.errorMessage,
+                              model: log.clientModel,
                               kind: "输出",
-                            }),
-                          );
-                        }}
-                      >
-                        <Eye size={15} />
-                      </Button>
-                      <span className="request-log-output-preview">
-                        {log.errorMessage ||
-                          requestPreview(log.responseBody, "output")}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="request-log-tokens-cell">
-                    {num.format(log.inputTokens)} /{" "}
-                    {num.format(log.outputTokens)}
-                    <span className="request-log-tokens-meta">
-                      缓存 {num.format(log.cachedInputTokens)} · 推理{" "}
-                      {num.format(log.reasoningOutputTokens)}
-                    </span>
-                  </td>
-                  <td className="request-log-latency-cell">
-                    {formatLatency(log.latencyMs)}
-                  </td>
-                  <td>{new Date(log.createdAt).toLocaleString()}</td>
-                </tr>
-              ))}
-              {logs.items.length === 0 && (
-                <tr>
-                  <td className="request-log-empty" colSpan={9}>
-                    暂无请求日志。通过本地代理发起调用后会显示在这里。
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                            });
+                            void getRequestLog(log.id).then((full) =>
+                              setSelectedPayload({
+                                content: full.responseBody || full.errorMessage,
+                                model: full.clientModel,
+                                kind: "输出",
+                              }),
+                            );
+                          }}
+                        >
+                          <Eye size={15} />
+                        </Button>
+                        <span className="request-log-output-preview">
+                          {log.errorMessage ||
+                            requestPreview(log.responseBody, "output")}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="request-log-tokens-cell">
+                      <Tooltip>
+                        <Tooltip.Trigger>
+                          <span className="request-log-tokens-value">
+                            {num.format(log.inputTokens)} /{" "}
+                            {num.format(log.outputTokens)}
+                          </span>
+                        </Tooltip.Trigger>
+                        <Tooltip.Content>
+                          输入 {num.format(log.inputTokens)} · 输出{" "}
+                          {num.format(log.outputTokens)} · 缓存{" "}
+                          {num.format(log.cachedInputTokens)} · 推理{" "}
+                          {num.format(log.reasoningOutputTokens)}
+                        </Tooltip.Content>
+                      </Tooltip>
+                    </td>
+                    <td className="request-log-latency-cell">
+                      {formatLatency(log.latencyMs)}
+                    </td>
+                    <td>{new Date(log.createdAt).toLocaleString()}</td>
+                  </tr>
+                ))}
+                {logs.items.length === 0 && (
+                  <tr>
+                    <td className="request-log-empty" colSpan={10}>
+                      暂无请求日志。通过本地代理发起调用后会显示在这里。
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
       {logs.totalPages > 1 && (
@@ -1057,6 +1239,58 @@ function UsageStatList({
     </div>
   );
 }
+function RouteModelList({
+  providerName,
+  models,
+}: {
+  providerName: string;
+  models: string[];
+}) {
+  const clipRef = useRef<HTMLDivElement>(null);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+
+  useEffect(() => {
+    const clip = clipRef.current;
+    if (!clip) return;
+    const checkOverflow = () =>
+      setIsOverflowing(clip.scrollHeight > clip.clientHeight);
+    checkOverflow();
+    const observer = new ResizeObserver(checkOverflow);
+    observer.observe(clip);
+    return () => observer.disconnect();
+  }, [models]);
+
+  return (
+    <Tooltip>
+      <Tooltip.Trigger>
+        <div className="route-model-list">
+          <div className="route-model-list-clip" ref={clipRef}>
+            <TagGroup
+              size="sm"
+              variant="surface"
+              aria-label={`${providerName} 模型列表`}
+            >
+              <TagGroup.List>
+                {models.map((model) => (
+                  <Tag key={model} id={model}>
+                    {model}
+                  </Tag>
+                ))}
+              </TagGroup.List>
+            </TagGroup>
+          </div>
+          {isOverflowing && (
+            <span className="route-model-more" aria-hidden="true">
+              ...
+            </span>
+          )}
+        </div>
+      </Tooltip.Trigger>
+      <Tooltip.Content>{models.join("、")}</Tooltip.Content>
+    </Tooltip>
+  );
+}
+
 function Overview({
   data,
   proxyRunning,
@@ -1159,19 +1393,7 @@ function Overview({
                     />
                     {p.name} · {p.models.length}个模型
                   </b>
-                  <TagGroup
-                    size="sm"
-                    variant="surface"
-                    aria-label={`${p.name} 模型列表`}
-                  >
-                    <TagGroup.List>
-                      {p.models.map((model) => (
-                        <Tag key={model} id={model}>
-                          {model}
-                        </Tag>
-                      ))}
-                    </TagGroup.List>
-                  </TagGroup>
+                  <RouteModelList providerName={p.name} models={p.models} />
                 </div>
                 <Chip
                   size="sm"
@@ -1395,10 +1617,24 @@ function Mappings({
     if (ok) setCopiedName(value);
   };
   // 启用提供商的激活模型构成可路由模型表。
-  const routes: { provider: Provider; model: string }[] = [];
-  for (const provider of providers.filter((p) => p.enabled)) {
-    for (const model of provider.models) routes.push({ provider, model });
-  }
+  // 启用提供商的激活模型构成可路由模型表，按提供商分组（原生 details 折叠）。
+  const groups = providers
+    .filter((p) => p.enabled && p.models.length > 0)
+    .map((provider) => ({
+      provider,
+      routes: provider.models.map((model) => ({
+        model,
+        mapping: mappings.find(
+          (m) => m.providerId === provider.id && m.upstreamModel === model,
+        ) ?? {
+          id: `auto-${provider.id}-${model}`,
+          clientModel: defaultClientModel(provider, model),
+          providerId: provider.id,
+          upstreamModel: model,
+          enabled: true,
+        },
+      })),
+    }));
   return (
     <section className="list-panel">
       {copiedName && (
@@ -1406,53 +1642,55 @@ function Mappings({
           已复制 {copiedName}
         </span>
       )}
-      {routes.length > 0 ? (
-        <div className="route-grid">
-          {routes.map(({ provider, model }) => {
-            const mapping = mappings.find(
-              (m) => m.providerId === provider.id && m.upstreamModel === model,
-            ) ?? {
-              id: `auto-${provider.id}-${model}`,
-              clientModel: defaultClientModel(provider, model),
-              providerId: provider.id,
-              upstreamModel: model,
-              enabled: true,
-            };
-            return (
-              <article className="route-card" key={`${provider.id}/${model}`}>
-                <div className="route-card-head">
-                  <b className="route-client-model" title={mapping.clientModel}>
-                    {mapping.clientModel}
-                  </b>
-                  <Button
-                    isIconOnly
-                    size="sm"
-                    variant="ghost"
-                    className="row-edit"
-                    onPress={() => copy(mapping.id, mapping.clientModel)}
-                    aria-label={`复制 ${mapping.clientModel}`}
-                  >
-                    <Copy size={14} />
-                  </Button>
-                  <Button
-                    isIconOnly
-                    size="sm"
-                    variant="ghost"
-                    className="row-edit"
-                    onPress={() => onEdit(mapping)}
-                    aria-label={`编辑 ${mapping.clientModel}`}
-                  >
-                    <Pencil size={15} />
-                  </Button>
-                </div>
-                <div className="route-card-body" title={model}>
-                  <Link size={13} />
-                  <code>{model}</code>
-                </div>
-              </article>
-            );
-          })}
-        </div>
+      {groups.length > 0 ? (
+        groups.map(({ provider, routes }) => (
+          <details className="mapping-group" key={provider.id} open>
+            <summary>
+              <ProviderIcon provider={provider} />
+              <b>{provider.name}</b>
+              <span className="mapping-group-count">{routes.length}</span>
+              <ChevronDown size={16} className="mapping-group-chevron" />
+            </summary>
+            <div className="route-grid">
+              {routes.map(({ model, mapping }) => (
+                <article className="route-card" key={`${provider.id}/${model}`}>
+                  <div className="route-card-head">
+                    <b
+                      className="route-client-model"
+                      title={mapping.clientModel}
+                    >
+                      {mapping.clientModel}
+                    </b>
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      variant="ghost"
+                      className="row-edit"
+                      onPress={() => copy(mapping.id, mapping.clientModel)}
+                      aria-label={`复制 ${mapping.clientModel}`}
+                    >
+                      <Copy size={14} />
+                    </Button>
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      variant="ghost"
+                      className="row-edit"
+                      onPress={() => onEdit(mapping)}
+                      aria-label={`编辑 ${mapping.clientModel}`}
+                    >
+                      <Pencil size={15} />
+                    </Button>
+                  </div>
+                  <div className="route-card-body" title={model}>
+                    <Link size={13} />
+                    <code>{model}</code>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </details>
+        ))
       ) : (
         <p className="provider-model-empty">
           尚无启用的提供商模型。前往「提供商连接」启用提供商并勾选模型后，这里会自动列出全部可路由模型。
