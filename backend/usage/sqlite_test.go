@@ -59,6 +59,39 @@ func TestListRequestLogsFiltersSavedNames(t *testing.T) {
 	}
 }
 
+func TestUsageByKeyAndBreakdown(t *testing.T) {
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "agent-router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tracker := NewSQLiteTracker(db)
+	for _, event := range []Event{
+		{TokenID: "key-a", TokenName: "甲", ProviderID: "openai", ClientModel: "chat", InputTokens: 10, OutputTokens: 5, Success: true},
+		{TokenID: "key-a", TokenName: "甲", ProviderID: "openai", ClientModel: "chat", InputTokens: 1, OutputTokens: 2, Success: false},
+		{TokenName: "乙", ProviderID: "deepseek", ClientModel: "reasoner", InputTokens: 7, OutputTokens: 3, Success: true},
+	} {
+		if err := tracker.Record(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keys := tracker.UsageByKey()
+	if len(keys) != 2 {
+		t.Fatalf("got %d key stats, want 2: %+v", len(keys), keys)
+	}
+	if keys[0].Key != "key-a" || keys[0].Requests != 2 || keys[0].Successes != 1 || keys[0].InputTokens != 11 || keys[0].OutputTokens != 7 {
+		t.Fatalf("unexpected key-a stats: %+v", keys[0])
+	}
+	// 空 token_id 回退到 token_name 分组。
+	if keys[1].Key != "乙" || keys[1].Requests != 1 {
+		t.Fatalf("unexpected fallback key stats: %+v", keys[1])
+	}
+	byProvider := tracker.UsageByProvider()
+	if len(byProvider) != 2 || byProvider[0].Key != "openai" || byProvider[0].InputTokens != 11 {
+		t.Fatalf("unexpected provider stats: %+v", byProvider)
+	}
+}
+
 func TestListRequestLogsFiltersStatus(t *testing.T) {
 	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "agent-router.db"))
 	if err != nil {

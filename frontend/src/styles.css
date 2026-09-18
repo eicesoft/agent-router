@@ -9,21 +9,107 @@
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  color: #202126;
+  color: var(--ink);
   background: transparent;
   font-synthesis: none;
   /* The window is full-size-content, so the webview extends under the traffic
      lights. Columns pad by this much to keep their first row clear of them,
      and the band above stays empty glass so it can act as a drag handle. */
   --titlebar-height: 38px;
-  --sidebar-surface: #f1f1f2;
+  /* App-level surface tokens. Only the values change in dark mode; every
+     component rule below reads these, so `html.dark` flips the whole shell. */
+  --sidebar-surface: rgba(241, 241, 242, 0.6);
+  --nav-item-hover: #e1e3e7;
+  --nav-item-active: #d7dae0;
+  --sidebar-ink: #2b2c31;
+  --sidebar-muted: #77787f;
+  --content-bg: rgba(255, 255, 255, 0.6);
+  --content-border: #d2d2d6;
+  --card-bg: rgba(255, 255, 255, 0.42);
+  --card-border: #e8e8ea;
+  --card-border-strong: #e7e7e9;
+  --ink: #202126;
+  --ink-strong: #18191e;
+  --ink-heading: #24252a;
+  --ink-body: #2d2e33;
+  --muted: #6b6d75;
+  --muted-2: #77787f;
+  --muted-3: #81838a;
+  --muted-4: #858790;
+  --faint: #999ba3;
+  --faint-2: #a0a2a9;
+  --faint-3: #aaaab0;
+  --hover-fill: #f1f1f2;
+  --hover-fill-strong: #f3f3f4;
+  --chip-bg: #f1f1f3;
+  --chip-ink: #51535a;
+  --well-bg: #f6f6f7;
+  --well-bg-2: #fafafa;
+  --well-border: #ececee;
+  --divider: #ededee;
+  --field-border: #d9d9d9;
+  --resize-grip: #c2c4cc;
+  --dots-underline: #c9cbd3;
+  --scroll-thumb: #d1d3d8;
+  --scroll-thumb-hover: #a9abb2;
+  --scrollbar-strip: #d1d3d8;
+  --success-ink: #1b6b3a;
+  --success-soft: #e7f6ec;
+  --success-border: #c7ebd4;
+  --success-well: #f2faf5;
+  /* 演练场：发送按钮与用户气泡共用一套草绿；输入框聚焦描边比默认淡。 */
+  --chat-accent: #10a37f;
+  --chat-accent-hover: #0d8f6f;
+  /* 品牌方块与用量进度条的强调填充色。 */
+  --accent-mark: #10a37f;
+  --chat-bubble-bg: #e8f4ea;
+  --chat-bubble-ink: #24503a;
+  --chat-focus-ring: #cfd1d6;
+  --success-code-border: #d9ecdf;
+  --success-code-bg: #fff;
+  --success-match-bg: #eef8f1;
+  --success-match-ink: #2e7d46;
+  --success-dot: #31b983;
+  --success-dot-ring: #e4f6ef;
+  --offline-dot: #b8bac0;
+  --offline-dot-ring: #f0f0f1;
+  --env-well: #f2f2f3;
+  --selected-bg: #202126;
+  --selected-bg-hover: #32343b;
+  --switch-off: #c8c9ce;
+  --switch-on: #202126;
+  --warn-ink: #a45a2a;
+  --ok-ink-strong: #14724a;
+  --ok-added-bg: #e8f7ee;
+  --danger-removed-bg: #fdeeee;
+  --danger-removed-ink: #a33a3a;
+  --error-ink: #c4443c;
+  --error-ink-strong: #b42318;
+  --loading-bg: rgba(237, 238, 242, 0.42);
+  --overlay-scrim: rgba(20, 21, 25, 0.6);
+  --dialog-bg: rgba(246, 246, 247, 0.92);
+  --drawer-shadow: -14px 0 38px rgba(26, 27, 31, 0.16);
+  --card-hover-shadow: 0 3px 10px rgba(20, 21, 25, 0.045);
+  --card-hover-border: #cfcfd3;
+  --brand-openai-bg: #e6f6f0;
+  --brand-openai-ink: #168b65;
+  --brand-anthropic-bg: #f6eee7;
+  --brand-gemini-bg: #eeedff;
+  --brand-gemini-ink: #5d55ce;
+  /* 演练场原始帧：文本与推理帧的中性灰底，比其它类型的彩底更收敛。 */
+  --frame-text-bg: #787d85;
+  --frame-reasoning-bg: #eef0f3;
+  --frame-text-ink: #dfe2e6;
+  --json-bg: #15171b;
+  --json-ink: #e8eaed;
+  --more-fade: linear-gradient(90deg, rgba(255, 255, 255, 0), #fff 35%);
 }
 input {
   outline: none;
 }
 * {
   box-sizing: border-box;
-  scrollbar-color: #d1d3d8 transparent;
+  scrollbar-color: var(--scrollbar-strip) transparent;
   scrollbar-width: thin;
 }
 [data-slot="button"] {
@@ -37,11 +123,11 @@ input {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: #d1d3d8;
+  background: var(--scroll-thumb);
   border-radius: 999px;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #a9abb2;
+  background: var(--scroll-thumb-hover);
 }
 body,
 button,
@@ -64,7 +150,7 @@ body,
 body {
   margin: 0;
   min-width: 1080px;
-  background: var(--sidebar-surface);
+  background: transparent;
 }
 html.agent-config-open,
 body.agent-config-open {
@@ -81,7 +167,9 @@ button {
   /* The gutter around the rounded content panel is the same surface as the
      sidebar, so it reads as one continuous outer layer. */
   background: var(--sidebar-surface);
-  border: 1px solid #ececee;
+  -webkit-backdrop-filter: blur(24px) saturate(1.15);
+  backdrop-filter: blur(24px) saturate(1.15);
+  border: 0;
   border-radius: 0;
   align-items: flex-start;
   box-shadow: none;
@@ -106,7 +194,7 @@ button {
   min-height: 100vh;
   border: 0;
   border-right: 0;
-  background: var(--sidebar-surface);
+  background: transparent;
   border-radius: 0;
   display: flex;
   align-items: center;
@@ -122,8 +210,8 @@ button {
   display: grid;
   place-items: center;
   border-radius: 9px;
-  color: #18191e;
-  background: #f4f4f5;
+  color: var(--ink-strong);
+  background: var(--hover-fill-strong);
 }
 .titlebar-sidebar-toggle {
   position: absolute;
@@ -135,7 +223,7 @@ button {
   min-width: 38px;
   padding: 0;
   border-radius: 9px;
-  color: #5f6067;
+  color: var(--muted-2);
   --wails-draggable: no-drag;
 }
 .icon-rail .titlebar-sidebar-toggle {
@@ -143,8 +231,8 @@ button {
   right: 10px;
 }
 .titlebar-sidebar-toggle:hover {
-  background: #e9eaed;
-  color: #18191e;
+  background: var(--nav-item-hover);
+  color: var(--ink-strong);
 }
 .rail-top-spacer {
   height: 38px;
@@ -153,11 +241,11 @@ button {
 .rail-divider {
   height: 1px;
   width: 30px;
-  background: #eeeeef;
+  background: var(--row-divider);
   margin: 10px 0;
 }
 .rail-action {
-  color: #5f6067;
+  color: var(--muted-2);
   border: 0;
   background: transparent;
   width: 38px;
@@ -170,16 +258,16 @@ button {
   transition: 0.15s ease;
 }
 .rail-action:hover {
-  background: #e9eaed;
-  color: #18191e;
+  background: var(--nav-item-hover);
+  color: var(--ink-strong);
 }
 .rail-action.selected {
-  color: white;
-  background: #202126;
+  color: #fff;
+  background: var(--selected-bg);
 }
 .rail-action.current {
-  background: #e9eaed;
-  color: #18191e;
+  background: var(--nav-item-active);
+  color: var(--ink-strong);
 }
 .rail-spacer {
   flex: 1;
@@ -189,19 +277,19 @@ button {
   height: 7px;
   margin: 6px 0 3px;
   border-radius: 50%;
-  background: #2ab882;
-  box-shadow: 0 0 0 3px #e1f6ed;
+  background: var(--success-dot);
+  box-shadow: 0 0 0 3px var(--success-dot-ring);
 }
 .rail-proxy-status.off {
-  background: #b8bac0;
-  box-shadow: 0 0 0 3px #f0f0f1;
+  background: var(--offline-dot);
+  box-shadow: 0 0 0 3px var(--offline-dot-ring);
 }
 .sidebar {
   position: relative;
-  width: 248px;
-  flex: 0 0 248px;
+  width: 300px;
+  flex: 0 0 300px;
   min-height: 100vh;
-  background: var(--sidebar-surface);
+  background: transparent;
   border: 0;
   /* No divider line: the floating content panel's own edge marks the split. */
   border-right: 0;
@@ -218,24 +306,59 @@ button {
   --wails-draggable: no-drag;
 }
 .resize-handle {
-  flex: 0 0 5px;
-  box-sizing: border-box;
-  margin: 0 -2px;
+  /* Hit-test target for the pane split. Zero-width in the flex row: a real
+     width adds gutter on the sidebar's right only, so its 11px padding read
+     as 23px against the content card. The grab area is instead an absolutely
+     positioned box straddling the seam, centred with translateX(-50%) so it
+     reaches equally into both panes without shifting either. Invisible, but
+     the imperceptible paint layer keeps it hit-testable in the desktop
+     WebView. */
+  flex: 0 0 0;
+  width: 0;
+  position: relative;
   /* Sit below the drag band so dragging the sidebar never moves the window. */
   margin-top: var(--titlebar-height);
+  height: calc(100vh - var(--titlebar-height));
   cursor: col-resize;
   z-index: 10;
-  transition: background 0.15s;
+
+  &::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 16px;
+    transform: translateX(-50%);
+    pointer-events: auto;
+    background: rgba(0, 0, 0, 0.001);
+  }
+
+  &::after {
+    content: "";
+    /* 拖动/悬停时显示的 2px 分割线。上下各避开内容卡的 6px 外边距 + 12px 圆角，
+       让线止于圆角开始处而不是压在圆角上；把手上缘在标题栏之下，需先补偿。
+       left:-2px 使线右缘与内容卡边框留出 1px 间隔。 */
+    position: absolute;
+    top: calc(18px - var(--titlebar-height));
+    bottom: 18px;
+    left: -2px;
+    width: 2px;
+    transform: translateX(-50%);
+    border-radius: 1px;
+    background: var(--resize-grip);
+    display: none;
+    pointer-events: none;
+  }
 }
-.resize-handle:hover {
-  background: rgba(99, 91, 255, 0.35);
-  background-clip: content-box;
-  padding: 0 1px;
+body.pane-resizing .resize-handle::after,
+.resize-handle:hover::after {
+  display: block;
 }
 .collapse-button {
   border: 0;
   background: transparent;
-  color: #777982;
+  color: var(--muted-2);
   width: 28px;
   height: 28px;
   border-radius: 6px;
@@ -245,8 +368,8 @@ button {
   margin-left: 3px;
 }
 .collapse-button:hover {
-  background: #f3f3f4;
-  color: #25262a;
+  background: var(--hover-fill-strong);
+  color: var(--ink-body);
 }
 .brand-mark {
   width: 28px;
@@ -254,7 +377,7 @@ button {
   display: grid;
   place-items: center;
   border-radius: 7px;
-  background: #635bff;
+  background: var(--accent-mark);
   color: #fff;
   font-weight: 800;
   font-size: 14px;
@@ -263,7 +386,7 @@ button {
   border: 0;
   border-radius: 9px;
   color: #fff;
-  background: #202126;
+  background: var(--selected-bg);
   height: 43px;
   margin: 12px 0 21px;
   display: flex;
@@ -275,11 +398,11 @@ button {
   font-size: 13px;
 }
 .create-button:hover {
-  background: #32343b;
+  background: var(--selected-bg-hover);
 }
 .nav-label,
 .eyebrow {
-  color: #999ba3;
+  color: var(--faint);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -287,6 +410,7 @@ button {
 }
 .nav-label {
   margin: 0 10px 7px;
+  color: var(--sidebar-muted);
 }
 .nav-label-first {
   margin-top: 21px;
@@ -301,7 +425,7 @@ button {
   border: 0;
   background: transparent;
   border-radius: 7px;
-  color: #42444b;
+  color: var(--sidebar-ink);
   display: flex !important;
   align-items: center !important;
   justify-content: flex-start !important;
@@ -311,30 +435,32 @@ button {
   font-size: 14px !important;
   font-weight: 500;
 }
+/* HeroUI buttons give svg icons -2px inline margins; undo it so the icon
+   inset (10px) matches the right inset and aligns with the section labels. */
+.nav-item svg {
+  margin-inline: 0 !important;
+}
 .nav-item.active {
-  background: #e9eaed;
-  color: #18191e;
+  background: var(--nav-item-active);
+  color: var(--ink-strong);
   font-weight: 650;
 }
 .nav-item:hover {
-  background: #e9eaed;
-  color: #18191e;
-}
-.nav-item.muted {
-  color: #70727a;
+  background: var(--nav-item-hover);
+  color: var(--ink-strong);
 }
 .nav-count {
   margin-left: auto !important;
   padding: 1px 5px;
   border-radius: 4px;
-  background: #f1f1f2;
-  color: #71737b;
+  background: transparent;
+  color: var(--sidebar-muted);
   font-size: 10px;
 }
 .sidebar-foot {
   margin-top: auto;
   padding: 54px 9px 0;
-  color: #575a62;
+  color: var(--sidebar-ink);
   font-size: 13px;
   display: flex;
   align-items: center;
@@ -348,7 +474,7 @@ button {
   min-width: 0;
 }
 .sidebar-foot small {
-  color: #a5a7ae;
+  color: var(--faint-3);
   font-size: 9px;
   white-space: nowrap;
 }
@@ -356,12 +482,12 @@ button {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #2ab882;
-  box-shadow: 0 0 0 3px #e1f6ed;
+  background: var(--success-dot);
+  box-shadow: 0 0 0 3px var(--success-dot-ring);
 }
 .online-dot.off {
-  background: #b8bac0;
-  box-shadow: 0 0 0 3px #f0f0f1;
+  background: var(--offline-dot);
+  box-shadow: 0 0 0 3px var(--offline-dot-ring);
 }
 /* Same glass material and gutter as the sidebar, so the split reads as one
    surface with the content card floating on it. */
@@ -370,22 +496,54 @@ button {
   min-width: 0;
   min-height: 0;
   height: calc(100vh - 12px);
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  /* 卡片本身不滚动：标题行固定，只有下方 .page-scroll 滚动。 */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   position: relative;
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid #e3e3e5;
+  background: var(--content-bg);
+  border: 1px solid var(--content-border);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.07);
   border-radius: 12px;
   margin: 6px 6px 6px 0;
-  padding: calc(24px + var(--titlebar-height) - 6px) 28px 18px;
+  padding: calc(2px + var(--titlebar-height) - 6px) 0 0;
 }
 header {
+  flex: 0 0 auto;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding-bottom: 16px;
-  margin-bottom: 18px;
+  /* 横向内边距原先在 .content 上，移到标题行与滚动区各自持有，滚动条才能
+     贴住卡片右缘。 */
+  padding: 0 28px 6px;
+  margin-bottom: 8px;
+}
+/* 页面主体的滚动容器。列方向 flex 让 .request-log-panel / .playground 这类
+   自管理滚动的页面仍能撑满剩余高度。 */
+.page-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  padding: 0 28px 18px;
+}
+.page-scroll > * {
+  /* flex 子项默认会被压缩：列方向容器里内容过高的页面会被挤扁而不是产生
+     溢出滚动，必须显式关掉收缩。 */
+  flex-shrink: 0;
+}
+/* 这三类页面自己管滚动，需要撑满剩余高度而不是按内容排布。 */
+.page-scroll > .playground,
+.page-scroll > .request-log-panel,
+.page-scroll > .loading {
+  flex-shrink: 1;
+}
+.page-scroll > .loading {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 h1,
 h2,
@@ -397,10 +555,10 @@ h1 {
   letter-spacing: -0.035em;
   font-weight: 700;
   margin: 0;
-  color: #202126;
+  color: var(--ink);
 }
 .subtitle {
-  color: #84868e;
+  color: var(--muted-4);
   font-size: 12px;
   line-height: 1.5;
   margin-top: 5px;
@@ -409,14 +567,36 @@ h1 {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #575a62;
+  color: var(--ink-muted);
   font-size: 12px;
   font-weight: 600;
+}
+/* 演练场的清空控件是裸按钮（不是 HeroUI Button），图标尺寸与标题行对齐。 */
+.playground-clear {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-3);
+  cursor: pointer;
+  transition: 0.15s ease;
+}
+.playground-clear:hover:not(:disabled) {
+  background: var(--hover-fill);
+  color: var(--ink-soft);
+}
+.playground-clear:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 header [data-slot="button"] {
   min-width: 126px !important;
   white-space: nowrap !important;
-  background: #202126 !important;
+  background: var(--selected-bg) !important;
   color: #fff !important;
   border-radius: 8px !important;
   font-size: 13px !important;
@@ -435,8 +615,8 @@ header [data-slot="button"] {
 .provider-card,
 .mapping-card,
 .agent-card {
-  background: rgba(255, 255, 255, 0.42) !important;
-  border: 1px solid #e8e8ea !important;
+  background: var(--card-bg) !important;
+  border: 1px solid var(--card-border) !important;
   border-radius: 10px !important;
   box-shadow: none !important;
 }
@@ -450,18 +630,18 @@ header [data-slot="button"] {
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: #f1f1f3;
-  color: #51535a;
+  background: var(--chip-bg);
+  color: var(--chip-ink);
   margin-bottom: 10px;
 }
 .metric span {
   display: block;
-  color: #81838a;
+  color: var(--muted-3);
   font-size: 11px;
 }
 .metric strong {
   display: block;
-  color: #24252a;
+  color: var(--ink-heading);
   font-size: 24px;
   letter-spacing: -0.045em;
   margin: 4px 0;
@@ -472,7 +652,7 @@ header [data-slot="button"] {
   cursor: help;
 }
 .metric small {
-  color: #aaaab0;
+  color: var(--faint-3);
   font-size: 10px;
 }
 .two-col {
@@ -497,7 +677,7 @@ header [data-slot="button"] {
 .route-row p,
 .provider-info p,
 .agent-card p {
-  color: #858790;
+  color: var(--muted-4);
   font-size: 12px;
   margin-top: 4px;
 }
@@ -506,7 +686,7 @@ header [data-slot="button"] {
   align-items: center;
   gap: 10px;
   padding: 10px 0;
-  border-bottom: 1px solid #f0f0f1;
+  border-bottom: 1px solid var(--row-divider);
 }
 .route-row:last-child {
   border-bottom: 0;
@@ -538,8 +718,8 @@ header [data-slot="button"] {
   right: 0;
   bottom: 0;
   padding-left: 5px;
-  color: #686a72;
-  background: #fff;
+  color: var(--muted);
+  background: var(--content-bg);
   font-size: 12px;
   line-height: 20px;
 }
@@ -547,16 +727,16 @@ header [data-slot="button"] {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #31b983;
-  box-shadow: 0 0 0 3px #e4f6ef;
+  background: var(--success-dot);
+  box-shadow: 0 0 0 3px var(--success-dot-ring);
 }
 .status-dot.off {
-  background: #b8bac0;
-  box-shadow: 0 0 0 3px #f0f0f1;
+  background: var(--offline-dot);
+  box-shadow: 0 0 0 3px var(--offline-dot-ring);
 }
 .code-box {
-  border: 1px solid #ececee;
-  background: #fafafa;
+  border: 1px solid var(--well-border);
+  background: var(--well-bg-2);
   border-radius: 7px;
   margin: 9px 0;
   padding: 10px 11px;
@@ -566,26 +746,51 @@ header [data-slot="button"] {
   font-size: 11px;
 }
 .code-box span {
-  color: #909199;
+  color: var(--muted-3);
+}
+/* The copy control sits inline in front of the URL instead of floating at the
+   right edge, so it needs no reserved padding and stays quiet until hovered. */
+.code-box-value {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+/* 同 .skills-item-heading：Trigger 是 block 容器，行盒基线会把按钮推低约 2px。 */
+.code-box-value .code-box-copy {
+  display: flex;
+  align-items: center;
+}
+.code-box-value code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .code-box .code-box-copy[data-slot="button"] {
-  position: absolute;
-  top: 50%;
-  right: 7px;
-  transform: translateY(-50%);
+  position: static;
+  transform: none;
   margin-top: 0;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  flex: 0 0 auto;
+  padding: 0;
+  border-radius: 5px;
+  background: transparent !important;
+  color: var(--muted-3) !important;
+  box-shadow: none !important;
 }
-.code-box:has(.code-box-copy) {
-  position: relative;
-  padding-right: 42px;
+.code-box .code-box-copy[data-slot="button"]:hover {
+  background: var(--hover-fill-strong) !important;
+  color: var(--ink-soft) !important;
 }
 code {
-  color: #37383e;
+  color: var(--ink-soft);
 }
 .panel [data-slot="button"] {
   margin-top: 8px;
-  background: #f1f1f2 !important;
-  color: #37383d !important;
+  background: var(--hover-fill) !important;
+  color: var(--ink-soft) !important;
   border-radius: 7px !important;
   box-shadow: none !important;
   font-size: 12px !important;
@@ -600,8 +805,8 @@ code {
   display: grid;
   place-items: center;
   border-radius: 9px;
-  background: #f2f2f3;
-  color: #4d4f56;
+  background: var(--env-well);
+  color: var(--chip-ink);
   font-size: 15px;
   font-weight: 700;
 }
@@ -624,16 +829,16 @@ code {
   margin-top: 10px;
 }
 .mapping-arrow {
-  color: #9698a0;
+  color: var(--muted-2);
 }
 .mapping-group > summary {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 9px 12px;
-  border: 1px solid #e7e7e9;
+  border: 1px solid var(--card-border-strong);
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--card-bg);
   cursor: pointer;
   list-style: none;
   user-select: none;
@@ -646,21 +851,21 @@ code {
 }
 .mapping-group > summary > b {
   font-size: 13px;
-  color: #2d2e33;
+  color: var(--ink-body);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .mapping-group-count {
   font-size: 11px;
-  color: #6f7178;
-  background: #f2f2f3;
+  color: var(--muted);
+  background: var(--env-well);
   border-radius: 999px;
   padding: 2px 8px;
 }
 .mapping-group-chevron {
   margin-left: auto;
-  color: #9698a0;
+  color: var(--muted-2);
   transition: transform 0.15s ease;
 }
 .mapping-group[open] .mapping-group-chevron {
@@ -672,9 +877,9 @@ code {
   gap: 10px;
 }
 .route-card {
-  border: 1px solid #e7e7e9;
+  border: 1px solid var(--card-border-strong);
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--card-bg);
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
@@ -686,8 +891,8 @@ code {
     box-shadow 0.15s;
 }
 .route-card:hover {
-  border-color: #cfcfd3;
-  box-shadow: 0 3px 10px rgba(20, 21, 25, 0.045);
+  border-color: var(--card-hover-border);
+  box-shadow: var(--card-hover-shadow);
 }
 .route-toast {
   position: absolute;
@@ -695,9 +900,9 @@ code {
   left: 50%;
   transform: translate(-50%, -4px);
   font-size: 11px;
-  color: #1b6b3a;
-  background: #e7f6ec;
-  border: 1px solid #c7ebd4;
+  color: var(--success-ink);
+  background: var(--success-soft);
+  border: 1px solid var(--success-border);
   border-radius: 999px;
   padding: 4px 12px;
   pointer-events: none;
@@ -723,7 +928,7 @@ code {
 }
 .route-card-head .route-client-model {
   font-size: 13px;
-  color: #2d2e33;
+  color: var(--ink-body);
   font-weight: 650;
   letter-spacing: -0.01em;
   white-space: nowrap;
@@ -746,13 +951,13 @@ code {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #81838a;
+  color: var(--muted-3);
   min-width: 0;
 }
 .route-card-body code {
   font-size: 11px;
-  color: #33353b;
-  background: #f6f6f7;
+  color: var(--ink-body);
+  background: var(--well-bg);
   border-radius: 5px;
   padding: 3px 6px;
   white-space: nowrap;
@@ -774,15 +979,16 @@ code {
   align-items: center;
   justify-content: space-between;
   margin-top: 14px;
-  color: #93959d;
+  color: var(--muted-2);
   font-size: 11px;
 }
 .loading {
-  min-height: calc(100vh - 12px);
+  /* 位于 .page-scroll 内（已扣除标题行高度），按容器自身高度居中即可。 */
+  min-height: 100%;
   display: grid;
   place-items: center;
-  color: #73757d;
-  background: rgba(237, 238, 242, 0.42);
+  color: var(--muted-2);
+  background: var(--loading-bg);
 }
 .provider-list {
   max-width: 1050px;
@@ -794,7 +1000,7 @@ code {
   align-items: center !important;
   justify-content: center !important;
   gap: 6px !important;
-  background: #202126 !important;
+  background: var(--selected-bg) !important;
   color: #fff !important;
   border-radius: 7px !important;
   font-size: 12px !important;
@@ -802,7 +1008,7 @@ code {
   box-shadow: none !important;
 }
 .provider-table {
-  border: 1px solid #e9e9eb;
+  border: 1px solid var(--card-border-strong);
   border-radius: 9px;
   overflow: hidden;
 }
@@ -816,9 +1022,9 @@ code {
 .provider-table-label {
   height: 35px;
   padding: 0 15px;
-  background: #fafafa;
-  border-bottom: 1px solid #ededee;
-  color: #999ba2;
+  background: var(--well-bg-2);
+  border-bottom: 1px solid var(--divider);
+  color: var(--faint);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -827,7 +1033,7 @@ code {
 .provider-row {
   min-height: 64px;
   padding: 8px 15px;
-  border-bottom: 1px solid #efeff0;
+  border-bottom: 1px solid var(--table-divider);
 }
 .provider-row:last-child {
   border: 0;
@@ -850,14 +1056,14 @@ code {
 }
 .provider-name small {
   font-size: 10px;
-  color: #9698a0;
+  color: var(--muted-2);
   margin-top: 1px;
   display: block;
   text-transform: capitalize;
 }
 .provider-url {
   font-size: 10px;
-  color: #777a82;
+  color: var(--muted-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -870,7 +1076,7 @@ code {
   white-space: nowrap;
 }
 .provider-models > span {
-  color: #90929a;
+  color: var(--muted-3);
   font-size: 10px;
 }
 .row-edit {
@@ -879,14 +1085,14 @@ code {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #777a82;
+  color: var(--muted-2);
   display: grid;
   place-items: center;
   cursor: pointer;
 }
 .row-edit:hover {
-  background: #f1f1f2;
-  color: #202126;
+  background: var(--hover-fill);
+  color: var(--ink);
 }
 .provider-row [data-slot="switch"] {
   justify-self: start;
@@ -898,9 +1104,9 @@ code {
 }
 .provider-compact-card {
   min-height: 142px;
-  border: 1px solid #e7e7e9;
+  border: 1px solid var(--card-border-strong);
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--card-bg);
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -909,8 +1115,8 @@ code {
     box-shadow 0.15s;
 }
 .provider-compact-card:hover {
-  border-color: #cfcfd3;
-  box-shadow: 0 3px 10px rgba(20, 21, 25, 0.045);
+  border-color: var(--card-hover-border);
+  box-shadow: var(--card-hover-shadow);
 }
 .provider-card-top {
   display: flex;
@@ -923,20 +1129,20 @@ code {
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: #f0f0f2;
-  color: #4e5059;
+  background: var(--chip-bg);
+  color: var(--chip-ink);
 }
 .provider-symbol.openai {
-  background: #e6f6f0;
-  color: #168b65;
+  background: var(--brand-openai-bg);
+  color: var(--brand-openai-ink);
 }
 .provider-symbol.anthropic {
-  background: #f6eee7;
-  color: #a45a2a;
+  background: var(--brand-anthropic-bg);
+  color: var(--warn-ink);
 }
 .provider-symbol.gemini {
-  background: #eeedff;
-  color: #5d55ce;
+  background: var(--brand-gemini-bg);
+  color: var(--brand-gemini-ink);
 }
 .provider-card-title {
   min-width: 0;
@@ -945,13 +1151,13 @@ code {
 }
 .provider-card-title b {
   font-size: 13px;
-  color: #2d2e33;
+  color: var(--ink-body);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .provider-card-title span {
-  color: #94969e;
+  color: var(--muted-2);
   font-size: 10px;
   margin-top: 2px;
   text-transform: capitalize;
@@ -976,7 +1182,7 @@ code {
   flex: 1 1 auto;
   min-width: 0;
   display: block;
-  color: #878990;
+  color: var(--muted-4);
   font-size: 10px;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -996,20 +1202,20 @@ code {
   margin: 10px 0 0;
   padding: 6px 9px;
   border-radius: 7px;
-  background: #f2f2f3;
-  color: #8f9198;
+  background: var(--env-well);
+  color: var(--muted-3);
   font-size: 10px;
 }
 .key-env-row.matches {
-  background: #eef8f1;
-  color: #2e7d46;
+  background: var(--success-match-bg);
+  color: var(--success-match-ink);
 }
 .key-env-row svg {
   flex: 0 0 auto;
 }
 .provider-card-url {
   display: block;
-  color: #878990;
+  color: var(--muted-4);
   font-size: 10px;
   white-space: nowrap;
   overflow: hidden;
@@ -1023,7 +1229,8 @@ code {
   align-items: center;
   gap: 4px;
   overflow: hidden;
-  max-height: 44px;
+  /* 两行 = 16px tag × 2 + 4px gap；多出的 1px 会露出第三行半截 */
+  max-height: 36px;
   white-space: normal;
   line-height: 1.35;
 }
@@ -1033,14 +1240,14 @@ code {
   right: 0;
   bottom: 0;
   padding-left: 8px;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0), #fff 35%);
-  color: #686a72;
+  background: var(--more-fade);
+  color: var(--muted);
   font-size: 11px;
   line-height: 16px;
 }
 .provider-card-models > span {
   font-size: 10px;
-  color: #8f9198;
+  color: var(--muted-3);
 }
 .provider-card-models .tag-group,
 .provider-card-models .tag-group__list {
@@ -1060,7 +1267,7 @@ code {
 }
 .provider-card-footer > span {
   font-size: 10px;
-  color: #81838a;
+  color: var(--muted-3);
 }
 .key-status {
   margin-left: auto !important;
@@ -1072,13 +1279,13 @@ code {
   margin: 10px 0 0;
   padding: 6px 9px;
   border-radius: 7px;
-  background: #f2f2f3;
-  color: #8f9198;
+  background: var(--env-well);
+  color: var(--muted-3);
   font-size: 10px;
 }
 .key-env-row.matches {
-  background: #eef8f1;
-  color: #2e7d46;
+  background: var(--success-match-bg);
+  color: var(--success-match-ink);
 }
 .key-env-row svg {
   flex: 0 0 auto;
@@ -1098,7 +1305,7 @@ code {
   width: 100%;
 }
 .key-name-field > label {
-  color: #55575e;
+  color: var(--ink-muted);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -1110,8 +1317,8 @@ code {
 }
 .key-created {
   margin-top: 12px;
-  border: 1px solid #c7ebd4;
-  background: #f2faf5;
+  border: 1px solid var(--success-border);
+  background: var(--success-well);
   border-radius: 8px;
   padding: 12px 14px;
   display: grid;
@@ -1119,18 +1326,18 @@ code {
 }
 .key-created b {
   font-size: 13px;
-  color: #1b6b3a;
+  color: var(--success-ink);
 }
 .key-created p {
   font-size: 11px;
-  color: #5f7a68;
+  color: var(--success-match-ink);
   margin-top: 3px;
 }
 .key-created code {
   font-size: 11px;
   word-break: break-all;
-  background: #fff;
-  border: 1px solid #d9ecdf;
+  background: var(--success-code-bg);
+  border: 1px solid var(--success-code-border);
   border-radius: 6px;
   padding: 8px 10px;
 }
@@ -1156,12 +1363,12 @@ code {
   height: 17px !important;
   min-width: 30px !important;
   border-radius: 99px !important;
-  background: #c8c9ce !important;
+  background: var(--switch-off) !important;
   padding: 2px !important;
   transition: background 0.16s ease !important;
 }
 .provider-switch[data-selected="true"] .provider-switch-track {
-  background: #202126 !important;
+  background: var(--switch-on) !important;
 }
 .provider-switch-thumb {
   width: 13px !important;
@@ -1178,33 +1385,81 @@ code {
   position: fixed;
   z-index: 1000;
   inset: 0;
-  background: rgba(20, 21, 25, 0.18);
+  background: var(--overlay-scrim);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
   display: flex;
   justify-content: flex-end;
 }
 .provider-drawer {
   width: min(500px, 100vw);
   height: 100%;
-  background: rgba(255, 255, 255, 0.42);
-  box-shadow: -14px 0 38px rgba(26, 27, 31, 0.16);
+  /* Solid panel, so the glass blur that paired with the translucent tint is
+     gone with it. */
+  background: var(--dialog-bg);
+  box-shadow: var(--drawer-shadow);
   display: flex;
   flex-direction: column;
   animation: drawer-in 0.18s ease-out;
 }
+/* HeroUI fields carry a zero-width transparent border, which leaves white
+   inputs edgeless on a white panel; give them a gray outline to read as fields.
+   Border color is forced so the hover/focus states keep the same gray. */
+.provider-drawer [data-slot="input"],
+.provider-drawer .select__trigger,
+.provider-drawer .checkbox__control {
+  border: 1px solid var(--field-border) !important;
+}
+.provider-drawer [data-slot="button"].button--outline {
+  border-color: var(--card-border) !important;
+}
+/* HeroUI v3 form components take no size prop, so the small step is set here,
+   matching the compact filters in the request log. */
+.provider-drawer [data-slot="input"],
+.provider-drawer .select__trigger {
+  height: 30px !important;
+  min-height: 30px !important;
+  padding: 4px 10px !important;
+  border-radius: 8px !important;
+  font-size: 12px !important;
+}
+.provider-drawer .select__trigger {
+  padding-right: 26px !important;
+}
+.provider-drawer .select__value,
+.provider-drawer [data-slot="label"],
+.provider-drawer .checkbox__content,
+.provider-drawer .provider-model-name {
+  font-size: 12px !important;
+}
+/* The note class carried no rule, so it rendered as full-size body text. */
+.provider-drawer .provider-form-note {
+  font-size: 11px;
+}
+[data-slot="modal-backdrop"] {
+  background: var(--overlay-scrim) !important;
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+[data-slot="modal-dialog"] {
+  background: var(--dialog-bg) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.15);
+  backdrop-filter: blur(24px) saturate(1.15);
+}
 .provider-drawer-header {
   padding: 25px 25px 18px;
-  border-bottom: 1px solid #ededee;
+  border-bottom: 1px solid var(--divider);
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
 }
 .provider-drawer-header h2 {
   font-size: 17px;
-  color: #24252a;
+  color: var(--ink-heading);
 }
 .provider-drawer-header p {
   font-size: 12px;
-  color: #898b92;
+  color: var(--muted-4);
   margin-top: 4px;
 }
 .provider-form {
@@ -1232,10 +1487,47 @@ code {
 }
 .provider-drawer-footer {
   padding: 15px 25px;
-  border-top: 1px solid #ededee;
+  border-top: 1px solid var(--divider);
   display: flex;
   justify-content: flex-end;
   gap: 9px;
+}
+
+/* Settings modal — mirrors the drawer field styling in a compact dialog. */
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+}
+.settings-field [data-slot="input"],
+.settings-field .select__trigger {
+  border: 1px solid var(--field-border) !important;
+  height: 30px !important;
+  min-height: 30px !important;
+  padding: 4px 10px !important;
+  border-radius: 8px !important;
+  font-size: 12px !important;
+}
+.settings-field .select__trigger {
+  padding-right: 26px !important;
+}
+.settings-field .select__value,
+.settings-field [data-slot="label"] {
+  font-size: 12px !important;
+}
+.settings-note {
+  margin: 0;
+}
+.settings-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--error-ink);
 }
 .provider-model-selector {
   display: flex;
@@ -1264,12 +1556,12 @@ code {
 .provider-model-empty,
 .provider-model-error {
   margin: 0;
-  color: #858790;
+  color: var(--muted-4);
   font-size: 11px;
   line-height: 1.45;
 }
 .provider-model-error {
-  color: #b42318;
+  color: var(--error-ink-strong);
 }
 .provider-model-scroll {
   flex: 1 1 0;
@@ -1312,7 +1604,7 @@ code {
 }
 .provider-model-group > b {
   grid-column: 1 / -1;
-  color: #71737b;
+  color: var(--muted-2);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -1335,9 +1627,73 @@ code {
 }
 .request-log-filters {
   display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 200px)) repeat(2, max-content);
+  grid-template-columns:
+    repeat(4, minmax(140px, 200px)) minmax(180px, 220px)
+    repeat(2, max-content);
   align-items: end;
   gap: 8px;
+}
+/* HeroUI's DateRangePicker trigger ships without the field chrome its
+   segmented date inputs get from DateInputGroup, so the filter row styles it
+   to match the Select triggers beside it. */
+.request-log-filters .date-range-picker__trigger {
+  min-height: 30px;
+  /* 绝对定位的日历图标以此为包含块；RAC Button 本身不带 .button 类。 */
+  position: relative;
+  justify-content: space-between;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--field-border);
+  background: var(--field-background);
+  color: var(--ink-body);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.request-log-filters .date-range-picker__trigger:hover {
+  border-color: var(--field-border-hover);
+}
+.request-log-filters .date-range-picker__trigger:focus-visible {
+  outline: none;
+  border-color: var(--field-border-focus);
+}
+/* 日历图标按 Select 的做法绝对定位到 right 8px，从而和旁边 Select 的下拉箭头
+   处在同一列；触发器是 HeroUI Button，自带 position: relative。 */
+.request-log-filters .date-range-picker__trigger-indicator {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 8px;
+  margin-block: auto;
+  color: var(--muted-3);
+}
+/* 视觉与行为对齐 HeroUI 的 .select__clear-button：无值时不占位、不可点。 */
+.request-log-filters .date-range-trigger-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  padding: 4px;
+  border-radius: 12px;
+  color: var(--muted-3);
+  cursor: pointer;
+}
+/* 与 .select__clear-button 相同的占位：留出绝对定位图标的宽度。 */
+.request-log-filters .date-range-trigger-clear:not([data-empty="true"]) {
+  margin-inline-end: 24px;
+}
+.request-log-filters .date-range-trigger-clear:hover {
+  background: var(--default-hover);
+}
+.request-log-filters .date-range-trigger-clear[data-empty="true"] {
+  opacity: 0;
+  pointer-events: none;
+}
+.request-log-filters .date-range-picker__popover {
+  min-width: 480px;
 }
 .request-log-filters .select__trigger {
   min-height: 30px;
@@ -1345,7 +1701,12 @@ code {
   border-radius: 8px;
   min-width: 0;
 }
+.request-log-filters [data-slot="select"] {
+  min-width: 0;
+  width: 100%;
+}
 .request-log-filters .select__value {
+  min-width: 0;
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
@@ -1354,8 +1715,24 @@ code {
 .request-log-filters [data-slot="label"] {
   font-size: 11px;
 }
-.request-log-filters .select__value:has(.model-option) {
-  overflow: visible;
+/* HeroUI's select indicator is absolutely pinned to the trigger's right edge,
+   so the in-flow clear button needs its width reserved when a value is set. */
+.request-log-filters .select__clear-button:not([data-empty="true"]) {
+  margin-inline-end: 24px !important;
+}
+.request-log-select-popover {
+  max-height: 216px;
+  overflow-y: auto;
+  border-radius: 6px;
+}
+.request-log-select-popover .list-box {
+  padding: 3px;
+}
+.request-log-select-popover .list-box-item {
+  min-height: 26px;
+  padding: 3px 7px;
+  font-size: 11px;
+  line-height: 18px;
 }
 .model-option {
   display: flex;
@@ -1378,14 +1755,10 @@ code {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
-  color: #6b6d75;
+  color: var(--muted);
 }
-.content.logs-page {
-  height: calc(100vh - 12px);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
+/* 日志页与演练场沿用 .content 的固定高度列布局，无需额外规则；这里只保留
+   panels 的撑满设置。 */
 .content.logs-page .request-log-panel {
   flex: 1;
   min-height: 0;
@@ -1398,9 +1771,9 @@ code {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border: 1px solid #e7e7e9;
+  border: 1px solid var(--card-border-strong);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--card-bg);
   overflow: hidden;
 }
 .request-log-head {
@@ -1425,13 +1798,13 @@ code {
 .request-log-table th,
 .request-log-table td {
   padding: 9px 10px;
-  border-bottom: 1px solid #f0f0f1;
+  border-bottom: 1px solid var(--row-divider);
   text-align: left;
   vertical-align: middle;
 }
 .request-log-table th {
-  color: #6d6f78;
-  background: #fafafa;
+  color: var(--muted);
+  background: var(--well-bg-2);
   font-size: 11px;
   font-weight: 600;
 }
@@ -1457,7 +1830,7 @@ code {
   background: transparent;
 }
 .request-log-col-resize:hover::after {
-  background: #c2c4cc;
+  background: var(--resize-grip);
 }
 .request-log-compact-cell {
   max-width: 0;
@@ -1481,7 +1854,7 @@ code {
 }
 .request-log-tokens-value {
   cursor: default;
-  text-decoration: underline dotted #c9cbd3;
+  text-decoration: underline dotted var(--dots-underline);
   text-underline-offset: 3px;
 }
 .request-log-latency-cell {
@@ -1492,7 +1865,7 @@ code {
   min-width: 0;
   max-width: 0;
   overflow: hidden;
-  color: #575963;
+  color: var(--ink-muted);
 }
 .request-log-input,
 .request-log-output {
@@ -1537,10 +1910,10 @@ code {
   margin: 0;
   overflow: auto;
   padding: 14px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--json-border);
   border-radius: 9px;
-  background: #15171b;
-  color: #e8eaed;
+  background: var(--json-bg);
+  color: var(--json-ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   line-height: 1.55;
@@ -1552,7 +1925,7 @@ code {
 }
 .request-log-empty {
   padding: 34px !important;
-  color: #858790;
+  color: var(--muted-4);
   text-align: center !important;
 }
 .request-log-pagination {
@@ -1561,7 +1934,7 @@ code {
   align-items: center;
   justify-content: flex-end;
   gap: 14px;
-  color: #777983;
+  color: var(--muted-2);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -1580,11 +1953,11 @@ code {
   align-items: baseline;
 }
 .usage-token-head span {
-  color: #81838a;
+  color: var(--muted-3);
   font-size: 11px;
 }
 .usage-token-head strong {
-  color: #24252a;
+  color: var(--ink-heading);
   font-size: 22px;
   letter-spacing: -0.045em;
 }
@@ -1620,7 +1993,7 @@ code {
 }
 .usage-stat-name {
   font-size: 13px;
-  color: #2d2e33;
+  color: var(--ink-body);
   font-weight: 650;
   white-space: nowrap;
   overflow: hidden;
@@ -1635,14 +2008,14 @@ code {
   gap: 10px;
 }
 .usage-stat-tokens {
-  color: #777983;
+  color: var(--muted-2);
   font-size: 11px;
   white-space: nowrap;
 }
 .usage-stat-bar {
   height: 6px;
   border-radius: 999px;
-  background: #f0f0f2;
+  background: var(--row-divider);
   margin: 6px 0 4px;
   overflow: hidden;
 }
@@ -1650,10 +2023,10 @@ code {
   display: block;
   height: 100%;
   border-radius: 999px;
-  background: #635bff;
+  background: var(--accent-mark);
 }
 .usage-stat-meta {
-  color: #a0a2a9;
+  color: var(--faint-2);
   font-size: 10px;
 }
 .tool-template-list {
@@ -1666,9 +2039,9 @@ code {
   gap: 12px;
 }
 .agent-mini-card {
-  border: 1px solid #e8e8ea;
+  border: 1px solid var(--card-border);
   border-radius: 11px;
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--card-bg);
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -1684,7 +2057,7 @@ code {
   height: 33px;
   display: grid;
   place-items: center;
-  color: #4d4f56;
+  color: var(--chip-ink);
   flex-shrink: 0;
 }
 .agent-mini-icon img {
@@ -1701,23 +2074,23 @@ code {
 }
 .agent-mini-title b {
   font-size: 13px;
-  color: #24252a;
+  color: var(--ink-heading);
 }
 .agent-mini-title span {
   font-size: 10px;
 }
 .agent-mini-title .tool-ok {
-  color: #1b6b3a;
+  color: var(--success-ink);
 }
 .agent-mini-title .tool-warn {
-  color: #a45a2a;
+  color: var(--warn-ink);
 }
 .agent-mini-title [data-slot="chip"] {
   margin-left: auto;
 }
 .agent-mini-path {
   font-size: 10px;
-  color: #878990;
+  color: var(--muted-4);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1796,7 +2169,7 @@ code {
   box-shadow: none !important;
 }
 .tool-template-write {
-  background: #202126 !important;
+  background: var(--selected-bg) !important;
   color: #fff !important;
   font-weight: 600 !important;
 }
@@ -1804,15 +2177,15 @@ code {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: #7b7d85;
+  color: var(--muted-2);
   font-size: 11px;
   margin-bottom: 8px;
 }
 .diff-code-path code {
-  background: #f6f6f7;
+  background: var(--well-bg);
   border-radius: 5px;
   padding: 2px 6px;
-  color: #37383e;
+  color: var(--ink-soft);
 }
 .diff-split {
   display: grid;
@@ -1821,23 +2194,23 @@ code {
   margin-top: 12px;
 }
 .diff-pane {
-  border: 1px solid #e7e7e9;
+  border: 1px solid var(--card-border-strong);
   border-radius: 9px;
   overflow: hidden;
   min-width: 0;
 }
 .diff-pane-label {
   padding: 8px 12px;
-  background: #fafafa;
-  border-bottom: 1px solid #ededee;
-  color: #777982;
+  background: var(--well-bg-2);
+  border-bottom: 1px solid var(--divider);
+  color: var(--muted-2);
   font-size: 11px;
   font-weight: 600;
 }
 .diff-code {
   margin: 0;
   padding: 10px 0;
-  background: #fff;
+  background: var(--dialog-bg);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 11px;
   line-height: 1.6;
@@ -1850,13 +2223,1057 @@ code {
   padding: 0 12px;
 }
 .diff-line.diff-added {
-  background: #e8f7ee;
-  color: #14724a;
+  background: var(--ok-added-bg);
+  color: var(--ok-ink-strong);
 }
 .diff-line.diff-removed {
-  background: #fdeeee;
-  color: #a33a3a;
+  background: var(--danger-removed-bg);
+  color: var(--danger-removed-ink);
 }
 .diff-line.diff-same {
-  color: #55575e;
+  color: var(--ink-muted);
+}
+
+/* ---------------------------------------------------------------------------
+   Dark theme. `html.dark` / `[data-theme="dark"]` (set by SettingsModal via
+   applyTheme) re-points every app-level token; the rules above pick the new
+   values up unchanged. HeroUI components follow their own `.dark` block from
+   @heroui/styles, so only app-specific surfaces are overridden here. The app
+   keeps its glass look: translucent panels over the macOS vibrancy layer.
+   --------------------------------------------------------------------------- */
+html.dark {
+  color-scheme: dark;
+
+  /* 深侧栏 + 浅内容区：两个表面接近不透明，壁纸/亚克力亮度不再影响
+     明暗关系（0.72 透明度下亮壁纸会把侧栏透成 80+ 的浅灰）。 */
+  --sidebar-surface: rgba(15, 16, 20, 0.9);
+  --nav-item-hover: #33353c;
+  --nav-item-active: #3c3e46;
+  --sidebar-ink: #d6d7db;
+  --sidebar-muted: #8b8d96;
+
+  --content-bg: rgba(56, 58, 66, 0.94);
+  --content-border: #45464e;
+  --card-bg: rgba(40, 41, 48, 0.6);
+  --card-border: #43444c;
+  --card-border-strong: #43444c;
+
+  --ink: #e7e8ec;
+  --ink-strong: #f4f4f6;
+  --ink-heading: #f0f0f3;
+  --ink-body: #d9dade;
+  --ink-muted: #a6a8b1;
+
+  --muted: #9d9fa8;
+  --muted-2: #8b8d96;
+  --muted-3: #84868f;
+  --muted-4: #82848d;
+  --faint: #6f717a;
+  --faint-2: #686a73;
+  --faint-3: #63656e;
+
+  --hover-fill: #33343b;
+  --hover-fill-strong: #33343b;
+  --chip-bg: #33343b;
+  --chip-ink: #b8bac2;
+  --well-bg: #2b2c33;
+  --well-bg-2: #26272d;
+  --well-border: #3a3b42;
+  --divider: #3a3b42;
+  --row-divider: #33343a;
+  --table-divider: #33343a;
+  --field-border: #52535c;
+  --resize-grip: #55565f;
+  --dots-underline: #4a4b54;
+  --scroll-thumb: #45464e;
+  --scroll-thumb-hover: #5a5b64;
+  --scrollbar-strip: #45464e;
+
+  --success-ink: #55c98a;
+  --success-soft: rgba(46, 160, 100, 0.16);
+  --success-border: rgba(85, 201, 138, 0.35);
+  --success-well: rgba(46, 160, 100, 0.1);
+  --chat-accent: #1f9d78;
+  --chat-accent-hover: #25b28a;
+  --accent-mark: #1f9d78;
+  --chat-bubble-bg: rgba(46, 160, 100, 0.16);
+  --chat-bubble-ink: #a8e6c4;
+  --chat-focus-ring: #5a5b64;
+  --success-code-border: rgba(85, 201, 138, 0.35);
+  --success-code-bg: rgba(0, 0, 0, 0.25);
+  --success-match-bg: rgba(46, 160, 100, 0.14);
+  --success-match-ink: #6bd098;
+  --success-dot: #2ab882;
+  --success-dot-ring: rgba(42, 184, 130, 0.22);
+  --offline-dot: #5f6169;
+  --offline-dot-ring: rgba(255, 255, 255, 0.08);
+  --env-well: #2b2c33;
+
+  --selected-bg: #e7e8ec;
+  --selected-bg-hover: #c9cad1;
+  --switch-off: #4a4b54;
+  --switch-on: #9aa0ff;
+
+  --warn-ink: #d08a55;
+  --ok-ink-strong: #62cf98;
+  --ok-added-bg: rgba(46, 160, 100, 0.14);
+  --danger-removed-bg: rgba(220, 90, 90, 0.14);
+  --danger-removed-ink: #e08585;
+  --error-ink: #e07a72;
+  --error-ink-strong: #e07a72;
+  --loading-bg: rgba(20, 21, 26, 0.42);
+
+  --overlay-scrim: rgba(8, 9, 12, 0.65);
+  --dialog-bg: rgba(34, 35, 41, 0.92);
+  --drawer-shadow: -14px 0 38px rgba(0, 0, 0, 0.5);
+  --card-hover-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+  --card-hover-border: #5a5b64;
+
+  --brand-openai-bg: rgba(22, 139, 101, 0.2);
+  --brand-openai-ink: #57c9a0;
+  --brand-anthropic-bg: rgba(164, 90, 42, 0.2);
+  --brand-gemini-bg: rgba(93, 85, 206, 0.22);
+  --brand-gemini-ink: #9a93e8;
+
+  /* The JSON viewer is already dark in light mode; deepen it slightly so it
+     still reads as a sunken well against the dark dialog. */
+  --json-bg: #101115;
+  --json-ink: #e8eaed;
+  --frame-text-bg: #3f434b;
+  --frame-reasoning-bg: #4a4f58;
+  --frame-text-ink: #e2e4e8;
+  --json-border: #34353c;
+  --more-fade: linear-gradient(90deg, rgba(56, 58, 66, 0), #383a42 35%);
+}
+
+/* Light-on-dark fixes for pieces whose light styling doesn't come from a
+   token: white text on the now-inverted selected fills stays white, and the
+   inner shadow on the content panel gets a dark equivalent. */
+html.dark .content {
+  /* 卡片叠在外壳的侧栏色之上，亚克力被二次过滤后偏暗；提高不透明度并
+     自带磨砂，使内容区不依赖透出的背景、稳定比侧栏亮。 */
+  -webkit-backdrop-filter: blur(24px) saturate(1.15);
+  backdrop-filter: blur(24px) saturate(1.15);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+html.dark .rail-logo {
+  background: #33343b;
+  color: var(--ink-strong);
+}
+html.dark .rail-action.selected,
+html.dark .create-button,
+html.dark .provider-add,
+html.dark header [data-slot="button"],
+html.dark .tool-template-write {
+  color: #14151a !important;
+}
+/* 演练场：常规 AI 聊天布局——消息流撑满剩余高度自行滚动，输入框连同模型
+   选择与发送按钮固定在底部；原始 SSE 帧默认收起，展开后夹在消息流与输入
+   框之间。页面本身不滚动（同 .content.logs-page）。 */
+.playground {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.playground-thread {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* 溢出交给 ScrollShadow（.scroll-shadow--vertical 自带 overflow-y: auto）。 */
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 4px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.playground-turn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.playground-turn.user {
+  align-items: flex-end;
+}
+/* 思考过程：默认折成一行摘要，展开后原文照抄上游的 reasoning 增量。 */
+.playground-thinking {
+  max-width: 100%;
+  font-size: 12px;
+}
+.playground-thinking summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--well-bg);
+  border: 1px solid var(--well-border);
+  color: var(--muted-4);
+  font-size: 11px;
+  cursor: pointer;
+  list-style: none;
+}
+.playground-thinking summary::-webkit-details-marker {
+  display: none;
+}
+.playground-thinking[open] summary {
+  border-color: var(--field-border);
+  color: var(--ink-soft);
+}
+.playground-thinking-body {
+  margin-top: 6px;
+  max-height: 30vh;
+  overflow-y: auto;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--well-bg);
+  border: 1px solid var(--well-border);
+  color: var(--muted-4);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+/* 摘要右侧的转圈状态点：折叠时也要能看出还在输出。 */
+.playground-thinking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--selected-bg);
+  animation: playground-pulse 1.4s ease-in-out infinite;
+}
+@keyframes playground-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.playground-bubble {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.65;
+  padding: 9px 11px;
+  border-radius: 12px 12px 12px 4px;
+  max-width: 76%;
+  background: var(--well-bg-2);
+  border: 1px solid var(--well-border);
+  color: var(--ink-body);
+}
+.playground-turn.assistant .playground-bubble {
+  background: transparent;
+  border-color: transparent;
+  padding: 2px 0;
+}
+/* Markdown 正文：去掉 pre-wrap（块级元素自己换行），并给标题/列表/引用/代码
+   足够的间距，避免 HeroUI 的重置把 ul/p 的缩进和 margin 全清掉后挤成一坨。 */
+.playground-bubble.markdown {
+  white-space: normal;
+}
+.playground-bubble.markdown > div > :first-child {
+  margin-top: 0;
+}
+.playground-bubble.markdown > div > :last-child {
+  margin-bottom: 0;
+}
+.playground-bubble.markdown p {
+  margin: 0 0 8px;
+}
+.playground-bubble.markdown h1,
+.playground-bubble.markdown h2,
+.playground-bubble.markdown h3,
+.playground-bubble.markdown h4 {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink-heading);
+}
+.playground-bubble.markdown h1 {
+  font-size: 15px;
+}
+.playground-bubble.markdown ul,
+.playground-bubble.markdown ol {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+.playground-bubble.markdown li {
+  margin: 2px 0;
+}
+.playground-bubble.markdown blockquote {
+  margin: 0 0 8px;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--well-border);
+  color: var(--muted-4);
+}
+.playground-bubble.markdown a {
+  color: var(--brand-openai-ink);
+}
+.playground-bubble.markdown code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--well-bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+.playground-bubble.markdown pre {
+  margin: 0 0 8px;
+  padding: 9px 11px;
+  border-radius: 7px;
+  border: 1px solid var(--well-border);
+  background: var(--well-bg-2);
+  overflow-x: auto;
+}
+.playground-bubble.markdown pre code {
+  padding: 0;
+  background: none;
+}
+.playground-bubble.markdown table {
+  margin: 0 0 8px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.playground-bubble.markdown th,
+.playground-bubble.markdown td {
+  padding: 4px 8px;
+  border: 1px solid var(--well-border);
+}
+.playground-bubble.markdown hr {
+  margin: 10px 0;
+  border: none;
+  border-top: 1px solid var(--well-border);
+}
+.playground-turn.user .playground-bubble {
+  /* 用户气泡用淡草绿，与发送按钮同一套颜色。 */
+  background: var(--chat-bubble-bg);
+  border-color: transparent;
+  border-radius: 12px 12px 4px 12px;
+  color: var(--chat-bubble-ink);
+}
+/* 流式光标：一个呼吸的 AI 小星星，挂在正在输出的正文或思考末尾。 */
+.playground-caret {
+  display: inline-block;
+  margin-left: 4px;
+  color: var(--selected-bg);
+  vertical-align: baseline;
+  animation: playground-twinkle 1.4s ease-in-out infinite;
+}
+@keyframes playground-twinkle {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.playground-frames {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  /* 展开时上方是把手（接缝见下），底部紧贴输入区：不画线、不做圆角。 */
+  background: var(--well-bg-2);
+  border: 1px solid var(--well-border);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  margin-bottom: -10px;
+}
+/* 展开/收起把手：居中横条，下圆角朝上、底边开进下方的表面，靠负外边距抵消
+   .playground 的 10px 间距，两态接缝都不画线。 */
+.playground-frames-toggle {
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 20px;
+  padding: 0;
+  margin-bottom: -10px;
+  border: 1px solid var(--well-border);
+  border-bottom: 0;
+  border-radius: 9px 9px 0 0;
+  background: var(--well-bg-2);
+  color: var(--muted-3);
+  cursor: pointer;
+  transition: 0.15s ease;
+}
+/* 展开时把手在面板之前：接缝不画线，面板保留自己的圆角。 */
+
+/* 面板紧跟在把手下方，上沿的线交给把手，读起来是一块连续表面。 */
+.playground-frames-toggle + .playground-frames {
+  border-top: 0;
+}
+.playground-frames-toggle:hover {
+  background: var(--well-bg);
+  color: var(--ink-soft);
+}
+.playground-frames-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--muted-4);
+  font-size: 11px;
+}
+.playground-frames-head > :first-child {
+  color: var(--ink-body);
+  font-weight: 600;
+}
+.playground-frame-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 26vh;
+  overflow-y: auto;
+  /* 溢出交给 ScrollShadow。 */
+  user-select: text;
+}
+.playground-frame {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--json-bg);
+}
+.playground-frame-index {
+  flex: 0 0 auto;
+  width: 22px;
+  color: #7d8089;
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  line-height: 18px;
+  text-align: right;
+}
+.playground-frame-kind[data-slot="chip"] {
+  flex: 0 0 auto;
+  background: rgba(255, 255, 255, 0.12) !important;
+  color: var(--json-ink) !important;
+  font-size: 10px !important;
+  height: 18px !important;
+  min-width: 52px;
+  justify-content: center;
+}
+.playground-frame pre {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  color: var(--json-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* 文本增量帧：深灰底 + 浅色等宽字，与其它类型的彩底区分开。 */
+.playground-frame.text {
+  background: var(--frame-text-bg);
+}
+.playground-frame.text pre {
+  color: var(--frame-text-ink);
+}
+.playground-frame.text .playground-frame-index {
+  color: #8d9098;
+}
+.playground-frame.done {
+  background: var(--success-soft);
+}
+.playground-frame.done pre,
+.playground-frame.done .playground-frame-index {
+  color: var(--success-ink);
+}
+.playground-frame.done .playground-frame-kind[data-slot="chip"] {
+  background: var(--success-border) !important;
+  color: var(--success-ink) !important;
+}
+.playground-frame.usage {
+  background: var(--brand-gemini-bg);
+}
+.playground-frame.usage pre,
+.playground-frame.usage .playground-frame-index {
+  color: var(--brand-gemini-ink);
+}
+.playground-frame.usage .playground-frame-kind[data-slot="chip"] {
+  background: rgba(93, 85, 206, 0.16) !important;
+  color: var(--brand-gemini-ink) !important;
+}
+.playground-frame.tool {
+  background: var(--brand-anthropic-bg);
+}
+.playground-frame.tool pre,
+.playground-frame.tool .playground-frame-index {
+  color: var(--warn-ink);
+}
+.playground-frame.tool .playground-frame-kind[data-slot="chip"] {
+  background: rgba(164, 90, 42, 0.16) !important;
+  color: var(--warn-ink) !important;
+}
+.playground-frame.reasoning {
+  background: var(--frame-reasoning-bg);
+}
+.playground-frame.reasoning pre,
+.playground-frame.reasoning .playground-frame-index {
+  color: var(--ink-soft);
+}
+.playground-frame.reasoning .playground-frame-kind[data-slot="chip"] {
+  background: rgba(125, 128, 137, 0.25) !important;
+  color: var(--ink-soft) !important;
+}
+/* 聊天式输入框：HeroUI 的 TextArea 只作文本框，模型选择与操作按钮放在同一
+   张卡片的下方工具条里（AI 客户端常见形态）。 */
+.playground-composer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.playground-composer-box {
+  /* 主列（正文 + 工具条）在左，发送按钮在右列并相对整块输入区垂直居中。 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 12px;
+  /* 用淡一档的 card-border：field-border 在底部输入框这里显得太重。 */
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  padding: 6px;
+}
+.playground-composer-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.playground-send {
+  flex: 0 0 auto;
+  /* .panel 的按钮规则会给按钮加 margin-top，这里必须清掉，否则居中会偏。 */
+  margin-top: 0 !important;
+}
+/* 只有发送（primary）是草绿；停止按钮沿用 ghost 的中性外观。 */
+.playground-send.button--primary {
+  background: var(--chat-accent) !important;
+  color: #fff !important;
+}
+.playground-send.button--primary:hover:not(:disabled) {
+  background: var(--chat-accent-hover) !important;
+}
+.playground-composer-box:focus-within {
+  /* 默认的 field-border-focus 由前景色混出，回应太抢眼；这里换成淡一档的灰。 */
+  border-color: var(--chat-focus-ring);
+}
+.playground-input {
+  width: 100%;
+  min-width: 0;
+  max-height: 30vh;
+  overflow-y: auto;
+  resize: none;
+  /* 随内容长高，到 max-height 后自身滚动；WKWebView 已支持，无需 JS 量高。 */
+  field-sizing: content;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 6px 8px !important;
+  font-size: 12px !important;
+  outline: none !important;
+}
+.playground-composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.playground-composer-picks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* 模型选择占满剩余宽度（思考档位按内容宽），超长名字省略；
+   HeroUI 的下拉箭头绝对定位在右侧，触发器必须留出它的位置。 */
+.playground-composer-picks .playground-model-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* 思考档位：按钮 + 弹层滑块，外观对齐旁边的 select 触发器。 */
+.playground-thinking-trigger {
+  /* 与左侧 select 触发器同一套皮肤：HeroUI 的表单控件没有边框（--field-border
+     是 transparent、--field-border-width 是 0），靠白底 + 投影成形。这里若画
+     一条 1px 实线，就会比旁边的 select 明显更重。 */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 0;
+  background: var(--field-background);
+  box-shadow: var(--field-shadow);
+  color: var(--field-foreground);
+  font-family: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.playground-thinking-trigger:hover {
+  background: var(--field-hover);
+}
+.playground-thinking-popover {
+  padding: 12px 14px;
+}
+.playground-thinking-popover .slider {
+  width: 200px;
+  gap: 4px;
+}
+.playground-thinking-popover .slider__output {
+  font-size: 12px;
+}
+.playground-thinking-popover [data-slot="label"] {
+  font-size: 12px;
+}
+.playground-composer-bar .select__trigger {
+  min-height: 30px;
+  /* 右侧 7 个间距单位给绝对定位的箭头，丢掉它文字会滑到箭头下面。 */
+  padding: 4px 28px 4px 10px;
+  border-radius: 8px;
+  min-width: 0;
+}
+.playground-composer-bar .select__value {
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.playground-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.playground-composer-actions > [data-slot="button"] {
+  margin-top: 0 !important;
+  flex: 0 0 auto;
+}
+.playground-error {
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: var(--danger-removed-bg);
+  color: var(--danger-removed-ink);
+  font-size: 11px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+html.dark .provider-switch-thumb {
+  background: #14151a !important;
+}
+html.dark .provider-switch[data-selected="true"] .provider-switch-thumb {
+  background: #fff !important;
+}
+
+/* ===== Skills 管理页 ===== */
+.skills-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.skills-error {
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: var(--danger-removed-bg);
+  color: var(--danger-removed-ink);
+  font-size: 11px;
+  -webkit-user-select: text;
+  user-select: text;
+  flex-shrink: 0;
+}
+.skills-conflict-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: #fdf6e4;
+  border: 1px solid #f0e2b8;
+  color: #8a6d1a;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+html.dark .skills-conflict-banner {
+  background: rgba(240, 200, 90, 0.12);
+  border-color: rgba(240, 200, 90, 0.3);
+  color: #e0c97a;
+}
+.skills-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.skills-toolbar > [data-slot="button"] {
+  margin-top: 0 !important;
+}
+.skills-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--field-border);
+  background: var(--well-bg-2);
+  color: var(--ink);
+  font-size: 12px;
+}
+.skills-search:focus {
+  outline: none;
+  border-color: var(--accent-mark);
+}
+.skills-source-filter {
+  height: 30px;
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid var(--field-border);
+  background: var(--well-bg-2);
+  color: var(--ink);
+  font-size: 12px;
+}
+.skills-add {
+  background: var(--ink) !important;
+  color: #fff !important;
+}
+html.dark .skills-add {
+  background: #fff !important;
+  color: #14151a !important;
+}
+.skills-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.skills-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 2px;
+}
+.skills-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  color: var(--muted-4);
+  font-size: 12px;
+}
+.skills-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--well-border);
+  background: var(--well-bg-2);
+  text-align: left;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.skills-item:hover {
+  border-color: var(--field-border);
+}
+/* 已禁用的 skill 标题置灰加删除线，状态标签只做淡化，不重复划线。 */
+.skills-item.disabled .skills-item-label {
+  color: var(--muted-3);
+  text-decoration: line-through;
+}
+.skills-item.active {
+  border-color: var(--accent-mark);
+}
+.skills-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  /* 标题、token、文件数、状态标签共用同一行盒高度，保证垂直居中对齐。 */
+  min-height: 22px;
+}
+.skills-item-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+/* HeroUI 的 Tooltip.Trigger 是 display:block 的 div，内部行盒的基线对齐会把
+   token 胶囊往下推 2px，和旁边的文件数、状态标签错位；改成 flex 容器让胶囊
+   直接作为 flex item 参与居中。 */
+.skills-item-heading .tooltip__trigger {
+  display: flex;
+  align-items: center;
+}
+.skills-item-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+/* 名称本身承担省略号：flex 容器上的 text-overflow 不生效，需要内联子元素。 */
+.skills-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.skills-token-tag {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  height: 20px;
+  line-height: 1;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--well-bg);
+  border: 1px solid var(--well-border);
+  color: var(--muted-3);
+  cursor: default;
+}
+.skills-conflict-icon {
+  color: #d09020;
+}
+.skills-warn-icon {
+  color: var(--muted-3);
+}
+.skills-source-tag {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  line-height: 1;
+  font-size: 10px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--well-bg);
+  border: 1px solid var(--well-border);
+  color: var(--muted-2);
+}
+.skills-source-tag.disabled {
+  opacity: 0.55;
+}
+/* Agent 页的 skills 链接弹窗：一行一个 skill，右侧只标异常状态。 */
+.skills-link-list {
+  max-height: 52vh;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+.skills-link-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.skills-link-row:hover {
+  background: var(--well-bg);
+}
+.skills-link-name {
+  font-size: 12px;
+}
+.skills-link-state {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  font-size: 10px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--well-bg);
+  border: 1px solid var(--well-border);
+  color: var(--muted-2);
+}
+.skills-item-desc {
+  font-size: 11.5px;
+  color: var(--muted-2);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.skills-item-desc.one-line {
+  -webkit-line-clamp: 1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.skills-item-path {
+  font-size: 10px;
+  color: var(--muted-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.skills-item-path-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.skills-item-path-row .tooltip__trigger {
+  flex-shrink: 0;
+  display: flex;
+}
+.skills-path-copy[data-slot="button"] {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  padding: 0;
+  margin-top: 0 !important;
+  color: var(--muted-4);
+}
+.skills-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 4px 2px 8px 0;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.skills-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.skills-detail-head h2 {
+  font-size: 16px;
+  font-weight: 650;
+  margin: 0;
+}
+.skills-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+/* 同 .skills-item-heading：Trigger 是 block 容器会让胶囊基线错位。 */
+.skills-detail-title .tooltip__trigger {
+  display: flex;
+  align-items: center;
+}
+.skills-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.skills-detail-actions > [data-slot="button"] {
+  margin-top: 0 !important;
+}
+.skills-body {
+  border: 1px solid var(--well-border);
+  border-radius: 10px;
+  background: var(--well-bg-2);
+  padding: 14px 16px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 200px;
+}
+.skills-body p {
+  margin: 0 0 8px;
+}
+.skills-body h1,
+.skills-body h2,
+.skills-body h3,
+.skills-body h4 {
+  font-size: 13.5px;
+  margin: 14px 0 6px;
+}
+.skills-body code {
+  font-size: 11px;
+  background: var(--well-bg);
+  border: 1px solid var(--well-border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.skills-body pre {
+  background: var(--well-bg);
+  border: 1px solid var(--well-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.skills-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+.skills-body ul,
+.skills-body ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+.skills-body a {
+  color: var(--accent-mark);
+}
+.skills-body table {
+  border-collapse: collapse;
+}
+.skills-body th,
+.skills-body td {
+  border: 1px solid var(--well-border);
+  padding: 4px 8px;
+  font-size: 11.5px;
+}
+.skills-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 200px;
+  min-height: 0;
+}
+.skills-editor textarea {
+  flex: 1 1 auto;
+  min-height: 200px;
+  resize: none;
+  border-radius: 10px;
+  border: 1px solid var(--field-border);
+  background: var(--well-bg-2);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 12px 14px;
+}
+.skills-editor textarea:focus {
+  outline: none;
+  border-color: var(--accent-mark);
+}
+.skills-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.skills-editor-actions > [data-slot="button"] {
+  margin-top: 0 !important;
 }

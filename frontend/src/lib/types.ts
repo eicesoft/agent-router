@@ -53,6 +53,7 @@ export type ToolPreview = {
   cli: string;
   installed: boolean;
   configPath: string;
+  skillsPath: string;
   exists: boolean;
   current: string;
   content: string;
@@ -117,6 +118,8 @@ export type RequestLogFilter = {
   model: string;
   provider: string;
   status: string;
+  from: string;
+  to: string;
 };
 export type Bootstrap = {
   providers: Provider[];
@@ -125,4 +128,47 @@ export type Bootstrap = {
   usage: Usage;
   apiKeys: LocalAPIKey[];
   proxyRunning: boolean;
+  settings: AppSettings;
+};
+export type AppSettings = {
+  host: string;
+  port: number;
+  theme: string;
+};
+export type PlaygroundChunk = { runId: string; data: string; done?: boolean };
+export type PlaygroundResult = { status: number; latencyMs: number };
+export type PlaygroundMessage = { role: string; content: string };
+
+export type SkillRoot = { path: string; source: string };
+export type Skill = {
+  name: string;
+  description: string;
+  dir: string;
+  root: string;
+  source: string;
+  enabled: boolean;
+  files: string[];
+  updatedAt: string;
+  missingFrontmatter: boolean;
+  tokenEstimate: number;
+};
+export type SkillDetail = Skill & { body: string };
+export type SkillSummary = {
+  roots: SkillRoot[];
+  skills: Skill[];
+  conflicts: string[];
+};
+// How a skill relates to a CLI's skills directory: published by this app
+// ("linked"), linkable ("missing"), a skill deleted after linking ("broken"),
+// or an entry this app did not create ("external").
+export type SkillLinkState = "linked" | "missing" | "external" | "broken";
+export type SkillLink = {
+  name: string;
+  dir: string;
+  target: string;
+  state: SkillLinkState;
+};
+export type ToolSkillLinks = {
+  targetDir: string;
+  links: SkillLink[];
 };

@@ -37,6 +37,11 @@ type Tool struct {
 	CLI       string
 	Config    string // absolute path, resolved at load
 	configRel string // OS-independent relative path
+	// SkillsDir is the CLI's global skills directory (absolute), empty for
+	// tools without one. Symlinking a skill into it is how a skill managed by
+	// this app becomes visible to that CLI.
+	SkillsDir string
+	skillsRel string // OS-independent relative path, "" when unsupported
 	// MultiProvider marks tools whose config holds several providers side by
 	// side (agent-router is merged alongside the user's existing providers).
 	// Tools without it (Claude Code) get the gateway written over their single
@@ -69,6 +74,7 @@ type catalogEntry struct {
 	Name          string      `json:"name"`
 	CLI           string      `json:"cli"`
 	ConfigRel     string      `json:"configRel"`
+	SkillsRel     string      `json:"skillsRel"`
 	MultiProvider bool        `json:"multiProvider"`
 	Shape         string      `json:"shape"`
 	ModelSlots    []ModelSlot `json:"modelSlots"`
@@ -91,6 +97,7 @@ func Tools() []Tool {
 			Name:          e.Name,
 			CLI:           e.CLI,
 			configRel:     filepath.FromSlash(e.ConfigRel),
+			skillsRel:     filepath.FromSlash(e.SkillsRel),
 			MultiProvider: e.MultiProvider,
 			Shape:         e.Shape,
 			ModelSlots:    e.ModelSlots,
@@ -109,6 +116,9 @@ func Resolve(t Tool) Tool {
 		home = os.Getenv("USERPROFILE")
 	}
 	t.Config = filepath.Join(home, t.configRel)
+	if t.skillsRel != "" {
+		t.SkillsDir = filepath.Join(home, t.skillsRel)
+	}
 	return t
 }
 
@@ -127,6 +137,9 @@ type Preview struct {
 	CLI        string `json:"cli"`
 	Installed  bool   `json:"installed"`
 	ConfigPath string `json:"configPath"`
+	// SkillsPath is the CLI's global skills directory; empty when the tool has
+	// none, and the UI hides the skills entry point.
+	SkillsPath string `json:"skillsPath"`
 	Exists     bool   `json:"exists"`
 	Current    string `json:"current"`
 	Content    string `json:"content"`

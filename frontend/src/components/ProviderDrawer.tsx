@@ -492,6 +492,18 @@ export function ProviderDrawer({
                 点击刷新图标获取模型；首次获取默认不启用。
               </p>
             )}
+            {/* 目录拉不到时（如 Anthropic 协议上游没有 /models 接口），仍要能手工
+                填模型名，否则提供商无法保存任何可用模型。 */}
+            {!groupedModels.length && (
+              <TextField
+                value={form.models}
+                onChange={(value) => change("models", value)}
+                aria-label="模型名称"
+              >
+                <Label>模型名称</Label>
+                <Input placeholder="手动填写，多个用逗号分隔" />
+              </TextField>
+            )}
           </section>
         </div>
         <div className="provider-drawer-footer">

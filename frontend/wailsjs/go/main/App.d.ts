@@ -4,15 +4,22 @@ import {envcfg} from '../models';
 import {provider} from '../models';
 import {main} from '../models';
 import {usage} from '../models';
+import {skills} from '../models';
 import {templates} from '../models';
+import {proxy} from '../models';
 import {config} from '../models';
 import {agent} from '../models';
 import {apikey} from '../models';
+import {settings} from '../models';
 import {context} from '../models';
+
+export function CancelPlayground():Promise<void>;
 
 export function DeleteLocalAPIKey(arg1:string):Promise<void>;
 
 export function DeleteProvider(arg1:string):Promise<void>;
+
+export function DeleteSkill(arg1:string):Promise<void>;
 
 export function ExportLocalAPIKeyEnv(arg1:string):Promise<envcfg.Status>;
 
@@ -26,13 +33,21 @@ export function GetBootstrap():Promise<main.Bootstrap>;
 
 export function GetRequestLog(arg1:number):Promise<usage.RequestLog>;
 
+export function GetSkill(arg1:string):Promise<skills.Detail>;
+
 export function GetUsageBreakdown():Promise<usage.Breakdown>;
 
 export function ListRequestLogs(arg1:number,arg2:number,arg3:usage.RequestLogFilter):Promise<usage.RequestLogPage>;
 
+export function ListSkillLinks(arg1:string):Promise<main.ToolSkillLinks>;
+
+export function ListSkills():Promise<main.SkillSummary>;
+
 export function ListToolTemplates():Promise<Array<templates.Preview>>;
 
 export function LocalAPIKeyEnvStatus(arg1:string):Promise<envcfg.Status>;
+
+export function PlaygroundChat(arg1:string,arg2:string,arg3:Array<proxy.Message>,arg4:string):Promise<main.PlaygroundResult>;
 
 export function RenderToolTemplate(arg1:templates.ToolID,arg2:Record<string, string>,arg3:Array<string>):Promise<templates.Preview>;
 
@@ -46,14 +61,22 @@ export function SaveModelMapping(arg1:config.ModelMapping):Promise<config.ModelM
 
 export function SaveProvider(arg1:provider.Provider):Promise<provider.Provider>;
 
+export function SaveSettings(arg1:settings.Settings):Promise<settings.Settings>;
+
+export function SaveSkillBody(arg1:string,arg2:string):Promise<void>;
+
 export function SetProviderAPIKey(arg1:string,arg2:string):Promise<void>;
 
 export function SetProxyRunning(arg1:boolean):Promise<void>;
+
+export function SetSkillLink(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
 export function Startup(arg1:context.Context):Promise<void>;
 
 export function ToggleLocalAPIKey(arg1:string,arg2:boolean):Promise<void>;
 
 export function ToggleProvider(arg1:string,arg2:boolean):Promise<void>;
+
+export function ToggleSkill(arg1:string,arg2:boolean):Promise<skills.Skill>;
 
 export function WriteToolTemplate(arg1:templates.ToolID,arg2:Record<string, string>,arg3:Array<string>):Promise<string>;

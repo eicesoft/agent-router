@@ -94,6 +94,45 @@ func TestModelsFilter(t *testing.T) {
 	}
 }
 
+// TestPICompatSessionAffinity guards the pi-only compat block: the gateway's
+// provider entry opts into session affinity headers, and a re-render replaces
+// the user's existing compat object instead of duplicating it.
+func TestPICompatSessionAffinity(t *testing.T) {
+	g := NewGenerator("http://127.0.0.1:9400", "agent-router", []Model{
+		{ID: "m1", Name: "m1"},
+	})
+
+	// Fresh document: compat lands first, matching the hand-written layout.
+	fresh := newDoc()
+	mergePI(fresh, g)
+	out, err := json.Marshal(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"compat":{"sendSessionAffinityHeaders":true}`) {
+		t.Errorf("compat block missing from fresh pi config:\n%s", out)
+	}
+
+	// Merge over a user document that already carries a compat object: the
+	// gateway entry is replaced wholesale, not merged or duplicated.
+	document, ok := parseDoc([]byte(`{"providers":{"agent-router":{"compat":{"stale":1}}},"defaultProvider":"other"}`))
+	if !ok {
+		t.Fatal("fixture did not parse")
+	}
+	mergePI(document, g)
+	out, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if strings.Contains(s, "stale") {
+		t.Errorf("stale compat keys survived re-render:\n%s", s)
+	}
+	if !strings.Contains(s, `"sendSessionAffinityHeaders":true`) {
+		t.Errorf("compat block missing after merge:\n%s", s)
+	}
+}
+
 // TestWriteBacksUp guards the pre-write backup rule: writing over an existing
 // config leaves a timestamped copy beside it before the merge lands.
 func TestWriteBacksUp(t *testing.T) {
@@ -145,5 +184,40 @@ func TestWriteBacksUp(t *testing.T) {
 	}
 	if !strings.Contains(string(written), "ANTHROPIC_BASE_URL") {
 		t.Errorf("merged config missing gateway env:\n%s", written)
+	}
+}
+
+// TestParseDocJSONC verifies .jsonc configs (kilo, mimocode) parse despite
+// comments and trailing commas — including a comma followed by a comment
+// before the closing brace, which is only trailing once comments are gone.
+// A parse failure here would silently drop the user's whole config.
+func TestParseDocJSONC(t *testing.T) {
+	data := []byte(`{
+		// provider list
+		"provider": {
+			"mine": {
+				"apiKey": "sk-\"quoted\"", // inline note
+				"limit": {"context": 1, /* block */ "output": 2,}
+			},
+		},
+	}`)
+	document, ok := parseDoc(data)
+	if !ok {
+		t.Fatal("jsonc document did not parse")
+	}
+	provider, _ := document.vals["provider"].(*doc)
+	if provider == nil {
+		t.Fatal("provider missing")
+	}
+	mine, _ := provider.vals["mine"].(*doc)
+	if mine == nil {
+		t.Fatal("mine missing")
+	}
+	if mine.vals["apiKey"] != `sk-"quoted"` {
+		t.Errorf("apiKey = %v, want escaped string preserved", mine.vals["apiKey"])
+	}
+	limit, _ := mine.vals["limit"].(*doc)
+	if limit == nil || limit.vals["output"] != json.Number("2") {
+		t.Errorf("limit = %v, want both keys after block-comment trailing comma", mine.vals["limit"])
 	}
 }

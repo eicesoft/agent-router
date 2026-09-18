@@ -1,13 +1,20 @@
 import type {
+  AppSettings,
   Bootstrap,
   EnvStatus,
   LocalAPIKey,
   ModelMapping,
+  PlaygroundMessage,
+  PlaygroundResult,
   Provider,
   RequestLog,
   RequestLogFilter,
   RequestLogPage,
+  Skill,
+  SkillDetail,
+  SkillSummary,
   ToolPreview,
+  ToolSkillLinks,
   UsageBreakdown,
 } from "./types";
 
@@ -84,6 +91,7 @@ const demo: Bootstrap = {
     },
   ],
   proxyRunning: true,
+  settings: { host: "127.0.0.1", port: 9400, theme: "light" },
 };
 export async function bootstrap(): Promise<Bootstrap> {
   const app = (window as any).go?.main?.App;
@@ -92,6 +100,14 @@ export async function bootstrap(): Promise<Bootstrap> {
 export async function setProxyRunning(enabled: boolean): Promise<void> {
   const app = (window as any).go?.main?.App;
   if (app) await app.SetProxyRunning(enabled);
+}
+
+export async function saveSettings(
+  settings: AppSettings,
+): Promise<AppSettings> {
+  const app = (window as any).go?.main?.App;
+  if (!app) return { ...demo.settings, ...settings };
+  return app.SaveSettings(settings);
 }
 export async function getUsageBreakdown(): Promise<UsageBreakdown> {
   const app = (window as any).go?.main?.App;
@@ -209,7 +225,14 @@ export async function fetchProviderModels(
 export async function listRequestLogs(
   page: number,
   pageSize = 20,
-  filter: RequestLogFilter = { token: "", model: "", provider: "", status: "" },
+  filter: RequestLogFilter = {
+    token: "",
+    model: "",
+    provider: "",
+    status: "",
+    from: "",
+    to: "",
+  },
 ): Promise<RequestLogPage> {
   const app = (window as any).go?.main?.App;
   if (!app) {
@@ -224,8 +247,93 @@ export async function getRequestLog(id: number): Promise<RequestLog> {
   return app.GetRequestLog(id);
 }
 
+export async function playgroundChat(
+  runId: string,
+  model: string,
+  messages: PlaygroundMessage[],
+  // off/low/medium/high — 归一成后端的 reasoning_effort，off 不发该字段。
+  reasoningLevel = "off",
+): Promise<PlaygroundResult> {
+  const app = (window as any).go?.main?.App;
+  if (!app) throw new Error("浏览器预览模式不支持演练场");
+  return app.PlaygroundChat(runId, model, messages, reasoningLevel);
+}
+
+export async function cancelPlayground(): Promise<void> {
+  const app = (window as any).go?.main?.App;
+  if (app) await app.CancelPlayground();
+}
+
 export async function fetchProviderIcon(baseUrl: string): Promise<string> {
   const app = (window as any).go?.main?.App;
   if (!app) throw new Error("请在桌面应用中获取网站图标");
   return app.FetchProviderIcon(baseUrl);
+}
+
+const demoSkills: SkillSummary = {
+  roots: [{ path: "~/.agents/skills", source: "user" }],
+  skills: [
+    {
+      name: "code-review",
+      description: "Review the changes since a fixed point along two axes.",
+      dir: "~/.agents/skills/code-review",
+      root: "~/.agents/skills",
+      source: "user",
+      enabled: true,
+      files: ["SKILL.md"],
+      updatedAt: "",
+      missingFrontmatter: false,
+      tokenEstimate: 320,
+    },
+  ],
+  conflicts: [],
+};
+export async function listSkills(): Promise<SkillSummary> {
+  const app = (window as any).go?.main?.App;
+  return app ? app.ListSkills() : demoSkills;
+}
+export async function getSkill(dir: string): Promise<SkillDetail> {
+  const app = (window as any).go?.main?.App;
+  if (!app) {
+    const demo = demoSkills.skills[0];
+    return { ...demo, body: "---\nname: code-review\n---\n\n(演示内容)" };
+  }
+  return app.GetSkill(dir);
+}
+export async function toggleSkill(
+  dir: string,
+  enabled: boolean,
+): Promise<Skill> {
+  const app = (window as any).go?.main?.App;
+  if (!app) {
+    return {
+      ...demoSkills.skills[0],
+      dir,
+      enabled,
+    };
+  }
+  return app.ToggleSkill(dir, enabled);
+}
+export async function deleteSkill(dir: string): Promise<void> {
+  const app = (window as any).go?.main?.App;
+  if (app) await app.DeleteSkill(dir);
+}
+export async function saveSkillBody(dir: string, body: string): Promise<void> {
+  const app = (window as any).go?.main?.App;
+  if (!app) throw new Error("浏览器预览模式不支持保存 skill");
+  await app.SaveSkillBody(dir, body);
+}
+export async function listSkillLinks(toolId: string): Promise<ToolSkillLinks> {
+  const app = (window as any).go?.main?.App;
+  if (!app) return { targetDir: "", links: [] };
+  return app.ListSkillLinks(toolId);
+}
+export async function setSkillLink(
+  toolId: string,
+  skillDir: string,
+  linked: boolean,
+): Promise<void> {
+  const app = (window as any).go?.main?.App;
+  if (!app) throw new Error("浏览器预览模式不支持修改 skill 链接");
+  await app.SetSkillLink(toolId, skillDir, linked);
 }

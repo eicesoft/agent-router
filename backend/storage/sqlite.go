@@ -63,6 +63,9 @@ CREATE TABLE IF NOT EXISTS request_logs (
   success INTEGER NOT NULL, latency_ms INTEGER NOT NULL DEFAULT 0, error_message TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at DESC, id DESC);
+-- 覆盖索引：使用统计与日志筛选只需小列，避免扫描含大体积请求/响应体的大表。
+CREATE INDEX IF NOT EXISTS idx_request_logs_token ON request_logs(token_id, token_name, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens, success);
+CREATE INDEX IF NOT EXISTS idx_request_logs_filter ON request_logs(token_id, provider_name, client_model, success);
 CREATE TABLE IF NOT EXISTS local_api_keys (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, api_key TEXT NOT NULL UNIQUE,
   enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL

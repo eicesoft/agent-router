@@ -117,6 +117,7 @@ export namespace main {
 	    usage: usage.Summary;
 	    apiKeys: apikey.Key[];
 	    proxyRunning: boolean;
+	    settings: settings.Settings;
 	
 	    static createFrom(source: any = {}) {
 	        return new Bootstrap(source);
@@ -130,6 +131,87 @@ export namespace main {
 	        this.usage = this.convertValues(source["usage"], usage.Summary);
 	        this.apiKeys = this.convertValues(source["apiKeys"], apikey.Key);
 	        this.proxyRunning = source["proxyRunning"];
+	        this.settings = this.convertValues(source["settings"], settings.Settings);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PlaygroundResult {
+	    status: number;
+	    latencyMs: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PlaygroundResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.status = source["status"];
+	        this.latencyMs = source["latencyMs"];
+	    }
+	}
+	export class SkillSummary {
+	    roots: skills.Root[];
+	    skills: skills.Skill[];
+	    conflicts: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new SkillSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.roots = this.convertValues(source["roots"], skills.Root);
+	        this.skills = this.convertValues(source["skills"], skills.Skill);
+	        this.conflicts = source["conflicts"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ToolSkillLinks {
+	    targetDir: string;
+	    links: skills.SkillLink[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ToolSkillLinks(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.targetDir = source["targetDir"];
+	        this.links = this.convertValues(source["links"], skills.SkillLink);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -222,6 +304,189 @@ export namespace provider {
 
 }
 
+export namespace proxy {
+	
+	export class Message {
+	    role: string;
+	    content: number[];
+	    name?: string;
+	    tool_calls?: number[];
+	    tool_call_id?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Message(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.role = source["role"];
+	        this.content = source["content"];
+	        this.name = source["name"];
+	        this.tool_calls = source["tool_calls"];
+	        this.tool_call_id = source["tool_call_id"];
+	    }
+	}
+
+}
+
+export namespace settings {
+	
+	export class Settings {
+	    host: string;
+	    port: number;
+	    theme: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Settings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.theme = source["theme"];
+	    }
+	}
+
+}
+
+export namespace skills {
+	
+	export class Detail {
+	    name: string;
+	    description: string;
+	    dir: string;
+	    root: string;
+	    source: string;
+	    enabled: boolean;
+	    files: string[];
+	    // Go type: time
+	    updatedAt: any;
+	    missingFrontmatter: boolean;
+	    tokenEstimate: number;
+	    body: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Detail(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.dir = source["dir"];
+	        this.root = source["root"];
+	        this.source = source["source"];
+	        this.enabled = source["enabled"];
+	        this.files = source["files"];
+	        this.updatedAt = this.convertValues(source["updatedAt"], null);
+	        this.missingFrontmatter = source["missingFrontmatter"];
+	        this.tokenEstimate = source["tokenEstimate"];
+	        this.body = source["body"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class Root {
+	    path: string;
+	    source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Root(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.source = source["source"];
+	    }
+	}
+	export class Skill {
+	    name: string;
+	    description: string;
+	    dir: string;
+	    root: string;
+	    source: string;
+	    enabled: boolean;
+	    files: string[];
+	    // Go type: time
+	    updatedAt: any;
+	    missingFrontmatter: boolean;
+	    tokenEstimate: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Skill(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.dir = source["dir"];
+	        this.root = source["root"];
+	        this.source = source["source"];
+	        this.enabled = source["enabled"];
+	        this.files = source["files"];
+	        this.updatedAt = this.convertValues(source["updatedAt"], null);
+	        this.missingFrontmatter = source["missingFrontmatter"];
+	        this.tokenEstimate = source["tokenEstimate"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SkillLink {
+	    name: string;
+	    dir: string;
+	    target: string;
+	    state: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SkillLink(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.dir = source["dir"];
+	        this.target = source["target"];
+	        this.state = source["state"];
+	    }
+	}
+
+}
+
 export namespace templates {
 	
 	export class Model {
@@ -258,6 +523,7 @@ export namespace templates {
 	    cli: string;
 	    installed: boolean;
 	    configPath: string;
+	    skillsPath: string;
 	    exists: boolean;
 	    current: string;
 	    content: string;
@@ -277,6 +543,7 @@ export namespace templates {
 	        this.cli = source["cli"];
 	        this.installed = source["installed"];
 	        this.configPath = source["configPath"];
+	        this.skillsPath = source["skillsPath"];
 	        this.exists = source["exists"];
 	        this.current = source["current"];
 	        this.content = source["content"];
@@ -420,6 +687,8 @@ export namespace usage {
 	    model: string;
 	    provider: string;
 	    status: string;
+	    from: string;
+	    to: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestLogFilter(source);
@@ -431,6 +700,8 @@ export namespace usage {
 	        this.model = source["model"];
 	        this.provider = source["provider"];
 	        this.status = source["status"];
+	        this.from = source["from"];
+	        this.to = source["to"];
 	    }
 	}
 	export class RequestLogPage {

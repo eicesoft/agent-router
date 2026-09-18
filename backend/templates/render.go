@@ -197,6 +197,11 @@ func mergeAIIDSK(document *doc, g *Generator) {
 func mergePI(document *doc, g *Generator) {
 	providers := document.object("providers")
 	providers.set(g.providerName, ordered(
+		// pi only: opt into session affinity headers so the gateway sees a
+		// stable session_id on every request of a conversation.
+		"compat", ordered(
+			"sendSessionAffinityHeaders", true,
+		),
 		"baseUrl", g.gateway+"/v1",
 		"api", "openai-completions",
 		// pi treats a bare uppercase value as a literal key; the $ prefix makes

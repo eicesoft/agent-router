@@ -73,6 +73,10 @@ type RequestLogFilter struct {
 	Provider string `json:"provider"`
 	// Status is "success" or "failed"; empty means no status filter.
 	Status string `json:"status"`
+	// From/To bound the request date (YYYY-MM-DD, compared against the UTC
+	// calendar day of created_at); empty means unbounded on that side.
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 type SQLiteTracker struct{ db *sql.DB }
@@ -172,10 +176,31 @@ func requestLogFilterClause(filter RequestLogFilter) (string, []any) {
 		clauses = append(clauses, `success = ?`)
 		args = append(args, value == "success")
 	}
+	// created_at is RFC3339 UTC, so ISO dates sort correctly as plain strings
+	// and To is made exclusive by appending the last character < next day.
+	if date := strings.TrimSpace(filter.From); date != "" {
+		clauses = append(clauses, `created_at >= ?`)
+		args = append(args, date+"T00:00:00Z")
+	}
+	if date := strings.TrimSpace(filter.To); date != "" {
+		clauses = append(clauses, `created_at < ?`)
+		args = append(args, nextDay(date)+"T00:00:00Z")
+	}
 	if len(clauses) == 0 {
 		return "", args
 	}
 	return " WHERE " + strings.Join(clauses, " AND "), args
+}
+
+// nextDay advances a YYYY-MM-DD date by one calendar day so a To filter is
+// inclusive of that whole day. Unparsable input is returned unchanged, which
+// simply filters nothing.
+func nextDay(date string) string {
+	t, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return date
+	}
+	return t.AddDate(0, 0, 1).Format("2006-01-02")
 }
 
 // UsageStat aggregates a dimension (provider or model) over all recorded events.

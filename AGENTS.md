@@ -63,7 +63,8 @@ React UI → App 方法（Wails 绑定）
 | `backend/config/` | `ModelMapping` + `MappingStore`（模型 → 提供商解析） |
 | `backend/apikey/` | 网关自身 key 的 `Store`（客户端 `ar-` 前缀密钥认证） |
 | `backend/envcfg/` | 把网关 key 写入用户 shell 环境（`AGENT_ROUTER_API_KEY`），跨平台 |
-| `backend/templates/` | 为 CLI 工具（opencode/mimocode/pi/claude/omp）生成网关接入配置；内嵌 `catalog.json` 声明式目录；读取用户现有配置文件并合并（保留原字段顺序），YAML/JSON 两种 shape |
+| `backend/templates/` | 为 CLI 工具（opencode/mimocode/pi/claude/omp）生成网关接入配置；内嵌 `catalog.json` 声明式目录（`configRel` 配置路径、`skillsRel` 该 CLI 的 skills 目录）；读取用户现有配置文件并合并（保留原字段顺序），YAML/JSON 两种 shape |
+| `backend/skills/` | 扫描/管理 skills 目录（纯文件系统，无 SQLite 镜像）；`link.go` 把 app 管理的 skill 以 symlink 发布进某个 CLI 的 skills 目录（见 `skillsRel`） |
 | `backend/storage/` | SQLite `Open()`，schema 唯一来源（唯一调用 mattn/go-sqlite3 之处） |
 | `backend/proxy/` | HTTP `Server`、`Adapter`、OpenAI 线协议类型 |
 | `backend/secret/` | `secret.Store` 接口 + macOS Keychain 实现 |
@@ -96,7 +97,7 @@ React UI → App 方法（Wails 绑定）
 ## 重要文件
 
 - `main.go` —— Wails 引导；`go:embed all:frontend/dist`；绑定 `*App`；1440×900
-- `app.go` —— `App` 门面、`NewApp()` 组合、`Bootstrap`、全部 Wails 绑定方法（`GetBootstrap`、`SaveProvider`、`ToggleProvider`、`SetProviderAPIKey`、`SaveModelMapping`、`SaveAgentPreset`、`ResolveModel`、`ListToolTemplates`、`RenderToolTemplate`、`WriteToolTemplate`、`ExportLocalAPIKeyEnv`、`GatewayHost`）
+- `app.go` —— `App` 门面、`NewApp()` 组合、`Bootstrap`、全部 Wails 绑定方法（`GetBootstrap`、`SaveProvider`、`ToggleProvider`、`SetProviderAPIKey`、`SaveModelMapping`、`SaveAgentPreset`、`ResolveModel`、`ListToolTemplates`、`RenderToolTemplate`、`WriteToolTemplate`、`ExportLocalAPIKeyEnv`、`GatewayHost`、`ListSkills`/`GetSkill`/`ToggleSkill`/`DeleteSkill`/`SaveSkillBody`、`ListSkillLinks`/`SetSkillLink`）
 - `backend/proxy/server.go` —— `GET /health`、`POST /v1/chat/completions`；监听 `127.0.0.1:9400`
 - `backend/proxy/adapter.go` —— `Adapter` 接口、`Compatible`、`Anthropic`
 - `backend/storage/sqlite.go` —— schema 唯一来源

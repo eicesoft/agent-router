@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
+	"sync"
 
 	"agent-router/backend/agent"
 	"agent-router/backend/apikey"
@@ -14,6 +16,8 @@ import (
 	"agent-router/backend/provider"
 	"agent-router/backend/proxy"
 	"agent-router/backend/secret"
+	"agent-router/backend/settings"
+	"agent-router/backend/skills"
 	"agent-router/backend/storage"
 	"agent-router/backend/templates"
 	"agent-router/backend/usage"
@@ -31,6 +35,17 @@ type App struct {
 	secrets   secret.Store
 	keys      *apikey.Store
 	proxy     *proxy.Server
+	settings  *settings.Store
+
+	// gatewayAddr is the listen address the proxy was last started with;
+	// SaveSettings updates it when the host/port changes. Address changes
+	// restart the proxy rather than killing in-flight requests.
+	gatewayAddr string
+
+	// playgroundCancel aborts the演练场 request in flight; guarded by
+	// playgroundMu because Wails runs each binding on its own goroutine.
+	playgroundMu     sync.Mutex
+	playgroundCancel context.CancelFunc
 }
 
 func NewApp() *App {
@@ -52,21 +67,31 @@ func NewApp() *App {
 	if err != nil {
 		panic(fmt.Errorf("load local api keys: %w", err))
 	}
+	prefs, err := settings.NewStore(db)
+	if err != nil {
+		panic(fmt.Errorf("load settings: %w", err))
+	}
+	current, err := prefs.Get()
+	if err != nil {
+		panic(fmt.Errorf("read settings: %w", err))
+	}
 	return &App{
-		db:        db,
-		providers: providers,
-		mappings:  mappings,
-		agents:    agent.NewStore(),
-		usage:     tracker,
-		secrets:   keychain,
-		keys:      keys,
-		proxy:     proxy.New(providers, mappings, keychain, tracker, keys),
+		gatewayAddr: current.Address(),
+		db:          db,
+		providers:   providers,
+		mappings:    mappings,
+		agents:      agent.NewStore(),
+		usage:       tracker,
+		secrets:     keychain,
+		keys:        keys,
+		proxy:       proxy.New(providers, mappings, keychain, tracker, keys),
+		settings:    prefs,
 	}
 }
 
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
-	if err := a.proxy.Start("127.0.0.1:9400"); err != nil {
+	if err := a.proxy.Start(a.gatewayAddr); err != nil {
 		panic(fmt.Errorf("start local proxy: %w", err))
 	}
 }
@@ -80,7 +105,42 @@ func (a *App) GetBootstrap() Bootstrap {
 		Usage:        a.usage.Summary(),
 		APIKeys:      a.keys.List(),
 		ProxyRunning: a.proxy.Running(),
+		Settings:     a.appSettings(),
 	}
+}
+
+func (a *App) appSettings() settings.Settings {
+	current, err := a.settings.Get()
+	if err != nil {
+		return settings.Defaults
+	}
+	return current
+}
+
+// SaveSettings persists preferences. Gateway host/port changes restart the
+// proxy on the new address immediately; the theme is applied by the UI.
+func (a *App) SaveSettings(input settings.Settings) (settings.Settings, error) {
+	if input.Port < 1 || input.Port > 65535 {
+		return a.appSettings(), fmt.Errorf("端口必须在 1-65535 之间")
+	}
+	if input.Theme != "light" && input.Theme != "dark" {
+		input.Theme = "light"
+	}
+	if input.Host == "" {
+		input.Host = settings.Defaults.Host
+	}
+	if err := a.settings.Save(input); err != nil {
+		return a.appSettings(), err
+	}
+	addr := input.Address()
+	if addr != a.gatewayAddr {
+		_ = a.proxy.Close()
+		if err := a.proxy.Start(addr); err != nil {
+			return a.appSettings(), fmt.Errorf("restart proxy on %s: %w", addr, err)
+		}
+		a.gatewayAddr = addr
+	}
+	return a.appSettings(), nil
 }
 
 // SetProxyRunning starts or stops the local gateway. Stopping refuses while
@@ -88,7 +148,7 @@ func (a *App) GetBootstrap() Bootstrap {
 // handlers are drained by the process lifetime.
 func (a *App) SetProxyRunning(enabled bool) error {
 	if enabled {
-		return a.proxy.Start("127.0.0.1:9400")
+		return a.proxy.Start(a.gatewayAddr)
 	}
 	return a.proxy.Close()
 }
@@ -207,6 +267,107 @@ func (a *App) SaveAgentPreset(input agent.Preset) (agent.Preset, error) {
 	return a.agents.Save(input)
 }
 
+// SkillSummary is the skills page listing: every discovered skill plus the
+// roots they came from and the set of conflicting (duplicate) names.
+type SkillSummary struct {
+	Roots     []skills.Root  `json:"roots"`
+	Skills    []skills.Skill `json:"skills"`
+	Conflicts []string       `json:"conflicts"`
+}
+
+// ListSkills scans the user's skills directories. Pure filesystem, no cache —
+// cheap enough to run on every page open.
+func (a *App) ListSkills() (SkillSummary, error) {
+	roots := skills.DefaultRoots()
+	items, conflicts := skills.List(roots)
+	names := make([]string, 0, len(conflicts))
+	for name := range conflicts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return SkillSummary{Roots: roots, Skills: items, Conflicts: names}, nil
+}
+
+// GetSkill loads one skill's full SKILL.md content.
+func (a *App) GetSkill(dir string) (skills.Detail, error) {
+	return skills.Get(dir)
+}
+
+// ToggleSkill enables/disables a user skill by moving its directory between
+// ~/.agents/skills and ~/.agents/skills-disabled. Returns the skill at its
+// new location so the UI can update without guessing the moved path.
+func (a *App) ToggleSkill(dir string, enabled bool) (skills.Skill, error) {
+	return skills.SetEnabled(dir, enabled)
+}
+
+// DeleteSkill removes a user skill directory.
+func (a *App) DeleteSkill(dir string) error {
+	return skills.Delete(dir)
+}
+
+// SaveSkillBody rewrites a user skill's SKILL.md body, preserving frontmatter.
+func (a *App) SaveSkillBody(dir string, body string) error {
+	return skills.SaveBody(dir, body)
+}
+
+// ToolSkillLinks is one tool's skills directory plus how every managed skill
+// relates to it (linked, linkable, or taken by something else).
+type ToolSkillLinks struct {
+	TargetDir string             `json:"targetDir"`
+	Links     []skills.SkillLink `json:"links"`
+}
+
+// ListSkillLinks reports which managed skills are published into a tool's
+// skills directory. A tool without one returns an empty target directory, which
+// the UI reads as "no skills support".
+func (a *App) ListSkillLinks(toolID string) (ToolSkillLinks, error) {
+	dir, err := toolSkillsDir(toolID)
+	if err != nil || dir == "" {
+		return ToolSkillLinks{}, err
+	}
+	items, _ := skills.List(skills.DefaultRoots())
+	links, err := skills.Links(dir, publishable(items))
+	if err != nil {
+		return ToolSkillLinks{}, err
+	}
+	return ToolSkillLinks{TargetDir: dir, Links: links}, nil
+}
+
+// SetSkillLink links or unlinks one managed skill in a tool's skills directory.
+func (a *App) SetSkillLink(toolID string, skillDir string, linked bool) error {
+	dir, err := toolSkillsDir(toolID)
+	if err != nil {
+		return err
+	}
+	if dir == "" {
+		return fmt.Errorf("%s 没有 skills 目录", toolID)
+	}
+	return skills.SetLink(skillDir, dir, linked)
+}
+
+// toolSkillsDir resolves a tool's skills directory from the catalog; "" means
+// the tool has no skills concept.
+func toolSkillsDir(toolID string) (string, error) {
+	for _, tool := range templates.Tools() {
+		if string(tool.ID) == toolID {
+			return templates.Resolve(tool).SkillsDir, nil
+		}
+	}
+	return "", fmt.Errorf("未知工具: %s", toolID)
+}
+
+// publishable drops disabled skills: they live outside every CLI's scan path on
+// purpose, so publishing one would undo the disable.
+func publishable(items []skills.Skill) []skills.Skill {
+	out := make([]skills.Skill, 0, len(items))
+	for _, skill := range items {
+		if skill.Source != skills.SourceDisabled {
+			out = append(out, skill)
+		}
+	}
+	return out
+}
+
 // ListRequestLogs supplies the paginated request history shown in the desktop UI.
 func (a *App) ListRequestLogs(page, pageSize int, filter usage.RequestLogFilter) (usage.RequestLogPage, error) {
 	return a.usage.ListRequestLogs(page, pageSize, filter)
@@ -219,17 +380,25 @@ func (a *App) GetRequestLog(id int64) (usage.RequestLog, error) {
 }
 
 // GetUsageBreakdown reports aggregate token and request counts grouped by
-// provider and by model for the usage dashboard.
+// provider and by model for the usage dashboard. Provider rows are grouped by
+// provider_id, whose raw value is an opaque ID, so the registry fills in the
+// display name the same way UsageByKey carries token_name.
 func (a *App) GetUsageBreakdown() usage.Breakdown {
+	providers := a.usage.UsageByProvider()
+	for i, stat := range providers {
+		if p, ok := a.providers.Get(stat.Key); ok {
+			providers[i].Name = p.Name
+		}
+	}
 	return usage.Breakdown{
-		Providers: a.usage.UsageByProvider(),
+		Providers: providers,
 		Models:    a.usage.UsageByModel(),
 		Keys:      a.usage.UsageByKey(),
 	}
 }
 
 // GatewayHost is the local router address the generated templates point at.
-func (a *App) GatewayHost() string { return "http://127.0.0.1:9400" }
+func (a *App) GatewayHost() string { return "http://" + a.gatewayAddr }
 
 // ListToolTemplates previews the merged config for every supported CLI, using
 // the automatic slot->model fallback.
@@ -280,6 +449,7 @@ func (a *App) previewTemplate(g *templates.Generator, tool templates.Tool) templ
 		CLI:           tool.CLI,
 		Installed:     tool.Installed(),
 		ConfigPath:    tool.Config,
+		SkillsPath:    tool.SkillsDir,
 		Exists:        toolExists(tool.Config),
 		Current:       string(current),
 		Content:       g.Render(tool),
@@ -333,4 +503,5 @@ type Bootstrap struct {
 	Usage        usage.Summary         `json:"usage"`
 	APIKeys      []apikey.Key          `json:"apiKeys"`
 	ProxyRunning bool                  `json:"proxyRunning"`
+	Settings     settings.Settings     `json:"settings"`
 }

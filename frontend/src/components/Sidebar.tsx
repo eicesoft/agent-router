@@ -2,6 +2,7 @@ import {
   Bot,
   Cable,
   ChartNoAxesCombined,
+  FlaskConical,
   KeyRound,
   LayoutDashboard,
   PanelLeftClose,
@@ -9,17 +10,28 @@ import {
   ScrollText,
   Settings2,
   SlidersHorizontal,
+  SquareTerminal,
 } from "lucide-react";
 import { Button, Tooltip } from "@heroui/react";
 
 export type Page =
-  "overview" | "providers" | "keys" | "mappings" | "agents" | "logs" | "usage";
+  | "overview"
+  | "providers"
+  | "keys"
+  | "mappings"
+  | "agents"
+  | "skills"
+  | "playground"
+  | "logs"
+  | "usage";
 const items = [
   ["overview", "控制台", LayoutDashboard],
   ["providers", "提供商", Cable],
   ["keys", "本地密钥", KeyRound],
   ["mappings", "模型映射", SlidersHorizontal],
   ["agents", "Agent", Bot],
+  ["skills", "Skills", SquareTerminal],
+  ["playground", "演练场", FlaskConical],
 ] as const;
 export function Sidebar({
   page,
@@ -31,6 +43,7 @@ export function Sidebar({
   mappingCount,
   proxyRunning,
   width,
+  onOpenSettings,
 }: {
   page: Page;
   setPage: (page: Page) => void;
@@ -41,6 +54,7 @@ export function Sidebar({
   mappingCount: number;
   proxyRunning: boolean;
   width: number;
+  onOpenSettings: () => void;
 }) {
   if (collapsed)
     return (
@@ -97,6 +111,7 @@ export function Sidebar({
           variant="ghost"
           className="rail-action"
           aria-label="设置"
+          onPress={onOpenSettings}
         >
           <Settings2 size={18} />
         </Button>
@@ -150,7 +165,7 @@ export function Sidebar({
       <Button
         size="sm"
         variant="ghost"
-        className={page === "logs" ? "nav-item active" : "nav-item muted"}
+        className={page === "logs" ? "nav-item active" : "nav-item"}
         onPress={() => setPage("logs")}
       >
         <ScrollText size={17} />
@@ -159,7 +174,7 @@ export function Sidebar({
       <Button
         size="sm"
         variant="ghost"
-        className={page === "usage" ? "nav-item active" : "nav-item muted"}
+        className={page === "usage" ? "nav-item active" : "nav-item"}
         onPress={() => setPage("usage")}
       >
         <ChartNoAxesCombined size={17} />
@@ -184,6 +199,7 @@ export function Sidebar({
           variant="ghost"
           className="collapse-button"
           aria-label="设置"
+          onPress={onOpenSettings}
         >
           <Settings2 size={15} />
         </Button>

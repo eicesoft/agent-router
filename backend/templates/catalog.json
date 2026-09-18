@@ -6,6 +6,7 @@
       "name": "OpenCode",
       "cli": "opencode",
       "configRel": ".config/opencode/opencode.json",
+      "skillsRel": ".config/opencode/skills",
       "multiProvider": true,
       "shape": "ai-sdk"
     },

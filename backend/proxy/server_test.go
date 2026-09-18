@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"agent-router/backend/config"
 	"agent-router/backend/provider"
@@ -586,6 +588,666 @@ func TestOpenAIStreamToolCallsBecomeAnthropicToolUseEvents(t *testing.T) {
 	}
 	if !strings.Contains(inputs[1], `"command":"ls"`) || inputs[2] != "{}" {
 		t.Fatalf("tool arguments never emitted: %s", captured.String())
+	}
+}
+
+// Reasoning models commonly stream their visible progress in
+// delta.reasoning_content before they emit delta.content. Dropping those
+// chunks leaves Claude Code with no downstream events for the whole reasoning
+// phase, so the UI appears frozen until the final answer starts.
+func TestOpenAIStreamReasoningBecomesAnthropicThinkingEvents(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"choices":[{"delta":{"reasoning_content":"Inspecting styles..."},"finish_reason":null}]}`,
+		`data: {"choices":[{"delta":{"reasoning_content":" found the selector."},"finish_reason":null}]}`,
+		`data: {"choices":[{"delta":{"content":"Fixed."},"finish_reason":null}]}`,
+		`data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`data: [DONE]`,
+		"",
+	}, "\n\n")
+
+	var captured strings.Builder
+	recorder := httptest.NewRecorder()
+	_, err := pipeOpenAIStreamToAnthropic(recorder, io.NopCloser(strings.NewReader(stream)), "client-model", &captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := captured.String()
+	wants := []string{
+		`"content_block":{"signature":"","thinking":"","type":"thinking"}`,
+		`"delta":{"thinking":"Inspecting styles...","type":"thinking_delta"}`,
+		`"delta":{"thinking":" found the selector.","type":"thinking_delta"}`,
+		`"delta":{"signature":"agent-router-openai-reasoning","type":"signature_delta"}`,
+		`"content_block":{"text":"","type":"text"}`,
+		`"delta":{"text":"Fixed.","type":"text_delta"}`,
+	}
+	for _, want := range wants {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %s in converted stream:\n%s", want, body)
+		}
+	}
+	if strings.Index(body, `"type":"thinking"`) > strings.Index(body, `"type":"text"`) {
+		t.Fatalf("thinking block must precede text block:\n%s", body)
+	}
+}
+
+// Thinking and reasoning controls must survive the gateway. pi/omp-style
+// clients send reasoning_effort or thinking on /v1/chat/completions, Claude
+// Code sends thinking on /v1/messages. All three paths re-marshal the request
+// (struct or map), so any field missing from the Go types is silently stripped.
+func TestChatCompletionsForwardsThinkingParameters(t *testing.T) {
+	var received map[string]json.RawMessage
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &received); err != nil {
+			t.Errorf("bad upstream body: %v: %s", err, body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"chatcmpl-6","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer upstream.Close()
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry, err := provider.NewRegistry(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	mappings, err := config.NewMappingStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	payload := `{"model":"client-model","messages":[{"role":"user","content":"hi"}],
+		"reasoning_effort":"high","thinking":{"type":"enabled","budget_tokens":2048},
+		"chat_template_kwargs":{"enable_thinking":true},"enable_thinking":true,"verbosity":"low"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer ar-local")
+	response := httptest.NewRecorder()
+	s.chatCompletions(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	if string(received["reasoning_effort"]) != `"high"` {
+		t.Errorf("reasoning_effort stripped: %s", received["reasoning_effort"])
+	}
+	if !strings.Contains(string(received["thinking"]), `"budget_tokens":2048`) {
+		t.Errorf("thinking stripped: %s", received["thinking"])
+	}
+	if !strings.Contains(string(received["chat_template_kwargs"]), `"enable_thinking":true`) {
+		t.Errorf("chat_template_kwargs stripped: %s", received["chat_template_kwargs"])
+	}
+	if string(received["enable_thinking"]) != "true" {
+		t.Errorf("enable_thinking stripped: %s", received["enable_thinking"])
+	}
+	if string(received["verbosity"]) != `"low"` {
+		t.Errorf("verbosity stripped: %s", received["verbosity"])
+	}
+}
+
+// An Anthropic client's thinking goes verbatim to an Anthropic upstream, and
+// maps to reasoning_effort for an OpenAI-compatible one.
+func TestMessagesHandlerForwardsAndMapsThinking(t *testing.T) {
+	var anthropicReceived map[string]json.RawMessage
+	anthropicUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &anthropicReceived); err != nil {
+			t.Errorf("bad upstream body: %v: %s", err, body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"upstream-model","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer anthropicUpstream.Close()
+
+	var openAIReceived map[string]json.RawMessage
+	openAIUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &openAIReceived); err != nil {
+			t.Errorf("bad upstream body: %v: %s", err, body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"chatcmpl-7","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer openAIUpstream.Close()
+
+	newStack := func(baseURL, kind string) (*Server, func()) {
+		db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		registry, err := provider.NewRegistry(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.Kind(kind), BaseURL: baseURL, APIKeyRef: "provider/test", Enabled: true}); err != nil {
+			t.Fatal(err)
+		}
+		mappings, err := config.NewMappingStore(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true}); err != nil {
+			t.Fatal(err)
+		}
+		s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+		return s, func() { db.Close() }
+	}
+
+	// max_tokens stays above reasoningFloorMaxTokens so the effort mapping (not
+	// the small-budget floor path) is what's under test here.
+	payload := `{"model":"client-model","max_tokens":32768,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":"hi"}]}`
+
+	s, closeDB := newStack(anthropicUpstream.URL, string(provider.KindAnthropic))
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload))
+	req.Header.Set("x-api-key", "ar-local")
+	response := httptest.NewRecorder()
+	s.messagesHandler(response, req)
+	closeDB()
+	if response.Code != http.StatusOK {
+		t.Fatalf("anthropic upstream status = %d: %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(string(anthropicReceived["thinking"]), `"budget_tokens":4096`) {
+		t.Errorf("thinking stripped on anthropic passthrough: %s", anthropicReceived["thinking"])
+	}
+
+	s, closeDB = newStack(openAIUpstream.URL, string(provider.KindCompatible))
+	req = httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload))
+	req.Header.Set("x-api-key", "ar-local")
+	response = httptest.NewRecorder()
+	s.messagesHandler(response, req)
+	closeDB()
+	if response.Code != http.StatusOK {
+		t.Fatalf("openai upstream status = %d: %s", response.Code, response.Body.String())
+	}
+	if string(openAIReceived["reasoning_effort"]) != `"medium"` {
+		t.Errorf("thinking not mapped to reasoning_effort: %s", openAIReceived["reasoning_effort"])
+	}
+
+	// Claude Code sends {"type":"adaptive"}, which OpenAI-compatible upstreams
+	// validate against enabled/disabled/auto and reject; it must not leak through.
+	payload = `{"model":"client-model","max_tokens":16,"thinking":{"type":"adaptive"},"messages":[{"role":"user","content":"hi"}]}`
+	openAIReceived = nil
+	s, closeDB = newStack(openAIUpstream.URL, string(provider.KindCompatible))
+	req = httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload))
+	req.Header.Set("x-api-key", "ar-local")
+	response = httptest.NewRecorder()
+	s.messagesHandler(response, req)
+	closeDB()
+	if response.Code != http.StatusOK {
+		t.Fatalf("openai upstream status = %d: %s", response.Code, response.Body.String())
+	}
+	if _, ok := openAIReceived["thinking"]; ok {
+		t.Errorf("anthropic thinking leaked to openai upstream: %s", openAIReceived["thinking"])
+	}
+}
+
+// An OpenAI-compatible upstream that dies mid-stream must not be translated
+// into a well-formed Anthropic message: without the guard the gateway emitted
+// message_delta + message_stop for whatever partial data it had, so Claude Code
+// saw a complete-looking turn, retried blind, and the log said success while
+// the user watched "Waiting for API response". The truncation must surface as
+// an Anthropic error event and a failed log row.
+func TestTruncatedOpenAIStreamBecomesAnthropicErrorEvent(t *testing.T) {
+	// No [DONE], no finish_reason: the body simply ends, the way a wedged
+	// proxy or a dropped upstream connection ends it.
+	stream := strings.Join([]string{
+		`data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"comm"}}]},"finish_reason":null}]}`,
+		"",
+	}, "\n\n")
+
+	var captured strings.Builder
+	recorder := httptest.NewRecorder()
+	_, err := pipeOpenAIStreamToAnthropic(recorder, io.NopCloser(strings.NewReader(stream)), "client-model", &captured)
+	if err == nil {
+		t.Fatalf("truncated stream reported as complete: %s", captured.String())
+	}
+
+	body := captured.String()
+	if strings.Contains(body, "event: message_stop") {
+		t.Fatalf("message_stop emitted for a truncated stream: %s", body)
+	}
+	if !strings.Contains(body, "event: error") || !strings.Contains(body, "ended without a finish_reason") {
+		t.Fatalf("no error event for the client: %s", body)
+	}
+}
+
+// The log must tell truncation and success apart: a streaming /v1/messages
+// request whose upstream body dies mid-flight is a failed exchange even though
+// bytes already reached the client.
+func TestTruncatedUpstreamStreamIsLoggedAsFailed(t *testing.T) {
+	// The handler returns when the upstream connection drops, so the server
+	// must outlive the handler: close via a background timer, not defer.
+	release := make(chan struct{})
+	time.AfterFunc(200*time.Millisecond, func() { close(release) })
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		_, _ = io.WriteString(w, `data: {"id":"chatcmpl-8","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}]}`+"\n\n")
+		flusher.Flush()
+		// Hold the body open, then let the server drop the connection without
+		// [DONE] — the mid-stream death the proxy produced in the field.
+		<-release
+	}))
+	defer upstream.Close()
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry, err := provider.NewRegistry(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mappings, err := config.NewMappingStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	payload := `{"model":"client-model","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload))
+	req.Header.Set("x-api-key", "ar-local")
+	response := httptest.NewRecorder()
+	s.messagesHandler(response, req)
+
+	body := response.Body.String()
+	if strings.Contains(body, "event: message_stop") {
+		t.Fatalf("message_stop emitted for a truncated stream: %s", body)
+	}
+	if !strings.Contains(body, "event: error") {
+		t.Fatalf("client got no error event: %s", body)
+	}
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs.Items) != 1 {
+		t.Fatalf("want 1 logged request, got %d", len(logs.Items))
+	}
+	if logs.Items[0].Success || logs.Items[0].ErrorMessage == "" {
+		t.Fatalf("truncated stream logged as successful: %+v", logs.Items[0])
+	}
+}
+
+// An Anthropic upstream that never sends message_stop must not be converted
+// into a complete-looking OpenAI stream: [DONE] would tell the client a
+// finish_reason arrived that never did.
+func TestTruncatedAnthropicStreamIsNotTerminated(t *testing.T) {
+	stream := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10,"output_tokens":1}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}`,
+		"", // no message_delta, no message_stop
+	}, "\n")
+	var out strings.Builder
+	err := anthropicStreamToOpenAI(strings.NewReader(stream), "client-model", &out)
+	if err == nil {
+		t.Fatalf("truncated anthropic stream reported as complete: %s", out.String())
+	}
+	if strings.Contains(out.String(), "data: [DONE]") {
+		t.Fatalf("[DONE] emitted for a truncated stream: %s", out.String())
+	}
+}
+
+// 演练场发的是 reasoning_effort，不是 Anthropic 的 thinking。要让它对 Anthropic
+// 系上游生效，适配器必须把档位换算成 thinking 预算，并抬高 max_tokens（Anthropic
+// 要求 max_tokens 大于 budget_tokens）。
+func TestAnthropicAdapterMapsReasoningEffortToThinkingBudget(t *testing.T) {
+	var received map[string]json.RawMessage
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &received); err != nil {
+			t.Errorf("bad upstream body: %v: %s", err, body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg_3","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"upstream-model","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer upstream.Close()
+	request := Request{
+		Model: "upstream-model", Messages: []Message{{Role: "user", Content: json.RawMessage(`"hi"`)}},
+		ReasoningEffort: ptrTo("high"),
+	}
+	if _, err := (Anthropic{Client: upstream.Client()}).Do(context.Background(), provider.Provider{
+		ID: "test", Name: "Test", Kind: provider.KindAnthropic, BaseURL: upstream.URL, APIKeyRef: "provider/test",
+	}, "sk-test", request); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(received["thinking"]), `"budget_tokens":16384`) {
+		t.Fatalf("effort not mapped to a thinking budget: %s", received["thinking"])
+	}
+	if len(received["max_tokens"]) == 0 || string(received["max_tokens"]) == "1024" {
+		t.Fatalf("max_tokens not raised for extended thinking: %s", received["max_tokens"])
+	}
+}
+
+// Anthropic 上游的思考增量必须转成 OpenAI 的 reasoning_content，否则演练场在
+// Anthropic 系提供商上只看到正文，思考块永远空着。
+func TestAnthropicStreamRelaysThinkingDeltas(t *testing.T) {
+	stream := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10,"output_tokens":1}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Inspecting"}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+	}, "\n")
+	var out strings.Builder
+	if err := anthropicStreamToOpenAI(strings.NewReader(stream), "client-model", &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"reasoning_content":"Inspecting"`) {
+		t.Fatalf("thinking delta dropped: %s", out.String())
+	}
+	if !strings.Contains(out.String(), `"content":"hi"`) {
+		t.Fatalf("text delta missing: %s", out.String())
+	}
+}
+
+// SSE 规范里冒号后的空格是可选的，阿里云 token-plan 的 Anthropic 端点写的是
+// "data:{...}"。按 "data: " 判断会把整条流读成空流：客户端只看到连接断掉，
+// 报 finish_reason 缺失，而事件其实一个不少。
+func TestAnthropicStreamWithoutSpaceAfterDataColon(t *testing.T) {
+	stream := strings.Join([]string{
+		`event:message_start`,
+		`data:{"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10,"output_tokens":1}}}`,
+		``,
+		`event:content_block_delta`,
+		`data:{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}`,
+		``,
+		`event:message_delta`,
+		`data:{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}`,
+		``,
+		`event:message_stop`,
+		`data:{"type":"message_stop"}`,
+	}, "\n")
+	var out strings.Builder
+	if err := anthropicStreamToOpenAI(strings.NewReader(stream), "client-model", &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"content":"hi"`) || !strings.Contains(out.String(), `"finish_reason":"stop"`) || !strings.Contains(out.String(), "data: [DONE]") {
+		t.Fatalf("space-less SSE stream not converted: %s", out.String())
+	}
+}
+
+// OpenAI 把工具结果放在独立的 "tool" 消息里，Anthropic 只认 user 消息里的
+// tool_result 块，上一轮的 tool_calls 也要变成 tool_use 块。原样转发 role=tool
+// 会被上游整条拒绝（400 Request body format invalid）。
+func TestAnthropicAdapterConvertsToolMessages(t *testing.T) {
+	var received struct {
+		Messages []struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &received); err != nil {
+			t.Errorf("bad upstream body: %v: %s", err, body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg_4","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"upstream-model","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer upstream.Close()
+	request := Request{Model: "upstream-model", Messages: []Message{
+		{Role: "user", Content: json.RawMessage(`"ls"`)},
+		{Role: "assistant", Content: json.RawMessage(`null`), ToolCalls: json.RawMessage(`[{"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]`)},
+		{Role: "tool", Content: json.RawMessage(`"ok"`), ToolCallID: "call_1"},
+	}}
+	if _, err := (Anthropic{Client: upstream.Client()}).Do(context.Background(), provider.Provider{
+		ID: "test", Name: "Test", Kind: provider.KindAnthropic, BaseURL: upstream.URL, APIKeyRef: "provider/test",
+	}, "sk-test", request); err != nil {
+		t.Fatal(err)
+	}
+	if len(received.Messages) != 3 {
+		t.Fatalf("want 3 upstream messages, got %d", len(received.Messages))
+	}
+	if received.Messages[1].Role != "assistant" || !strings.Contains(string(received.Messages[1].Content), `"tool_use"`) || !strings.Contains(string(received.Messages[1].Content), `"name":"bash"`) {
+		t.Fatalf("assistant tool_calls not converted to tool_use: %s", received.Messages[1].Content)
+	}
+	if received.Messages[2].Role != "user" || !strings.Contains(string(received.Messages[2].Content), `"tool_result"`) || !strings.Contains(string(received.Messages[2].Content), `"tool_use_id":"call_1"`) {
+		t.Fatalf("tool message not converted to tool_result: %s", received.Messages[2].Content)
+	}
+}
+
+// A stalled upstream body (half-open proxied connection: TCP ESTABLISHED,
+// no bytes arriving) must not park the handler forever. The stall guard
+// closes the body after the window, the stream is reported as ended early,
+// and — unlike the wedged request in the field — it leaves a log row.
+func TestStalledUpstreamStreamIsUnwedgedAndLogged(t *testing.T) {
+	release := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		_, _ = io.WriteString(w, `data: {"id":"chatcmpl-9","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}]}`+"\n\n")
+		flusher.Flush()
+		// Then silence: neither data nor connection close, indefinitely.
+		<-release
+	}))
+	defer upstream.Close()
+	time.AfterFunc(500*time.Millisecond, func() { close(release) })
+
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry, err := provider.NewRegistry(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	mappings, err := config.NewMappingStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s.stallTimeout = 50 * time.Millisecond
+
+	payload := `{"model":"client-model","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload))
+	req.Header.Set("x-api-key", "ar-local")
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		s.messagesHandler(response, req)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler still wedged on a stalled upstream body")
+	}
+
+	body := response.Body.String()
+	if strings.Contains(body, "event: message_stop") {
+		t.Fatalf("message_stop emitted for a stalled stream: %s", body)
+	}
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs.Items) != 1 || logs.Items[0].Success || logs.Items[0].ErrorMessage == "" {
+		t.Fatalf("stalled stream not logged as failed: %+v", logs.Items)
+	}
+}
+
+// Claude Code's permission classifier sends a small max_tokens (2112) to a
+// reasoning upstream: the model spends the whole budget thinking and returns
+// content:[] with stop_reason max_tokens, so the client waits on an empty
+// answer and retries — the gateway log showed six such 2112-token empty
+// responses in one afternoon. Small max_tokens must skip reasoning_effort and
+// get a floor so the model can still emit its verdict.
+func TestSmallMaxTokensSkipsReasoningEffortAndGetsFloor(t *testing.T) {
+	var openAIReceived map[string]json.RawMessage
+	openAIUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &openAIReceived); err != nil {
+			t.Errorf("bad upstream body: %v: %s", err, body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"chatcmpl-7","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer openAIUpstream.Close()
+
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry, err := provider.NewRegistry(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: openAIUpstream.URL, APIKeyRef: "provider/test", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	mappings, err := config.NewMappingStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages",
+		strings.NewReader(`{"model":"client-model","max_tokens":2112,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-api-key", "ar-local")
+	response := httptest.NewRecorder()
+	s.messagesHandler(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	if _, ok := openAIReceived["reasoning_effort"]; ok {
+		t.Errorf("reasoning_effort forwarded for small max_tokens: %s", openAIReceived["reasoning_effort"])
+	}
+	if got, want := string(openAIReceived["max_tokens"]), "8192"; got != want {
+		t.Errorf("max_tokens = %s, want raised to %s", got, want)
+	}
+
+	// A generous budget keeps both the effort mapping and the client's own cap.
+	openAIReceived = nil
+	req = httptest.NewRequest(http.MethodPost, "/v1/messages",
+		strings.NewReader(`{"model":"client-model","max_tokens":32000,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-api-key", "ar-local")
+	response = httptest.NewRecorder()
+	s.messagesHandler(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	if string(openAIReceived["reasoning_effort"]) != `"medium"` {
+		t.Errorf("reasoning_effort not mapped for normal max_tokens: %s", openAIReceived["reasoning_effort"])
+	}
+	if string(openAIReceived["max_tokens"]) != "32000" {
+		t.Errorf("max_tokens rewritten: %s", openAIReceived["max_tokens"])
+	}
+}
+
+// An OpenAI client routing to an Anthropic upstream must keep its sampling,
+// tool and thinking settings, and its messages must arrive as Anthropic shape.
+// The old body builder hard-coded max_tokens=1024 and dropped everything else.
+func TestAnthropicAdapterCarriesSamplingToolsAndThinking(t *testing.T) {
+	var received map[string]json.RawMessage
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &received); err != nil {
+			t.Errorf("bad upstream body: %v: %s", err, body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg_2","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"upstream-model","stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer upstream.Close()
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry, err := provider.NewRegistry(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindAnthropic, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	mappings, err := config.NewMappingStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	payload := `{"model":"client-model","messages":[
+		{"role":"system","content":"be brief"},
+		{"role":"user","content":"hi"}],
+		"max_tokens":512,"temperature":0.2,"top_p":0.9,"stop":["END"],
+		"tools":[{"type":"function","function":{"name":"bash","description":"run a command","parameters":{"type":"object","properties":{"command":{"type":"string"}}}}}],
+		"tool_choice":{"type":"function","function":{"name":"bash"}},
+		"thinking":{"type":"enabled","budget_tokens":2048}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer ar-local")
+	response := httptest.NewRecorder()
+	s.chatCompletions(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+
+	if string(received["max_tokens"]) != "512" {
+		t.Errorf("max_tokens not honored: %s", received["max_tokens"])
+	}
+	if string(received["temperature"]) != "0.2" || string(received["top_p"]) != "0.9" {
+		t.Errorf("sampling lost: temperature=%s top_p=%s", received["temperature"], received["top_p"])
+	}
+	if !strings.Contains(string(received["stop_sequences"]), `"END"`) {
+		t.Errorf("stop not mapped to stop_sequences: %s", received["stop_sequences"])
+	}
+	var tools []map[string]json.RawMessage
+	if err := json.Unmarshal(received["tools"], &tools); err != nil || len(tools) != 1 {
+		t.Fatalf("tools not in anthropic shape: %s", received["tools"])
+	}
+	if string(tools[0]["name"]) != `"bash"` || !strings.Contains(string(tools[0]["input_schema"]), `"command"`) {
+		t.Errorf("tool not reshaped: %s", received["tools"])
+	}
+	if !strings.Contains(string(received["tool_choice"]), `"name":"bash"`) {
+		t.Errorf("tool_choice not mapped: %s", received["tool_choice"])
+	}
+	if !strings.Contains(string(received["thinking"]), `"budget_tokens":2048`) {
+		t.Errorf("thinking stripped: %s", received["thinking"])
+	}
+	var system string
+	if err := json.Unmarshal(received["system"], &system); err != nil || system != "be brief" {
+		t.Errorf("system lost: %s", received["system"])
 	}
 }
 

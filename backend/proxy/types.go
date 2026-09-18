@@ -29,6 +29,16 @@ type Request struct {
 	FrequencyPenalty  *float64        `json:"frequency_penalty,omitempty"`
 	PresencePenalty   *float64        `json:"presence_penalty,omitempty"`
 	ResponseFormat    json.RawMessage `json:"response_format,omitempty"`
+	// Thinking / reasoning controls. Clients set reasoning_effort (OpenAI
+	// o-series and DeepSeek/Gemini-compatible gateways), thinking (Anthropic's
+	// {"type":"enabled","budget_tokens":N}, which some OpenAI-compatible
+	// upstreams also accept), or provider-specific extras below. All are passed
+	// through verbatim; cross-format mapping happens in anthropicViaOpenAI.
+	ReasoningEffort    *string         `json:"reasoning_effort,omitempty"`
+	Thinking           json.RawMessage `json:"thinking,omitempty"`
+	Verbosity          *string         `json:"verbosity,omitempty"`
+	ChatTemplateKwargs json.RawMessage `json:"chat_template_kwargs,omitempty"`
+	EnableThinking     *bool           `json:"enable_thinking,omitempty"`
 }
 
 // Anthropic request/response types for the /v1/messages endpoint.
@@ -50,6 +60,9 @@ type AnthropicRequest struct {
 	Tools       json.RawMessage    `json:"tools,omitempty"`
 	ToolChoice  json.RawMessage    `json:"tool_choice,omitempty"`
 	Metadata    json.RawMessage    `json:"metadata,omitempty"`
+	// Extended thinking. Forwarded verbatim to Anthropic upstreams; mapped to
+	// reasoning_effort when the upstream is OpenAI-compatible.
+	Thinking json.RawMessage `json:"thinking,omitempty"`
 }
 
 type AnthropicContent struct {

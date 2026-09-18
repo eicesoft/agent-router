@@ -30,6 +30,10 @@ type Server struct {
 	usage    *usage.SQLiteTracker
 	client   *http.Client
 
+	// stallTimeout is how long a streaming upstream body may stay silent
+	// before the gateway gives up on it; see upstreamStallTimeout.
+	stallTimeout time.Duration
+
 	// mu guards http, which Start, Close and Running all touch. The UI proxy
 	// toggle can call Start/Close while a request is being served.
 	mu   sync.Mutex
@@ -40,8 +44,76 @@ type KeyVerifier interface {
 	Lookup(token string) (id, name string, ok bool)
 }
 
+// upstreamHeaderTimeout bounds reaching the upstream, not the whole exchange.
+// An http.Client.Timeout is a deadline on the entire body read, so a long
+// completion was cut off at exactly 120s mid-stream and the client reported
+// "OpenAI completions stream closed before a finish_reason was received". The
+// request log agreed: every truncated row landed at 120.0xx s with no finish
+// chunk and no [DONE]. A streaming body is bounded by the request context
+// (the client hanging up) instead; an upstream that stalls mid-stream is left
+// to the client's own idle timeout, which it already enforces.
+const upstreamHeaderTimeout = 120 * time.Second
+
+func upstreamClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = upstreamHeaderTimeout
+	return &http.Client{Transport: transport}
+}
+
+// upstreamStallTimeout bounds how long a streaming upstream body may stay
+// silent. ResponseHeaderTimeout covers the wait for headers, but body reads
+// are otherwise unbounded: a half-open proxied connection (TUN fake-ip mode
+// leaves the socket ESTABLISHED while forwarding nothing) parks the handler
+// in Body.Read forever, so the client waits on "will retry" and the request
+// never even reaches request_logs — logEvent runs only after the stream ends.
+// The window matches the header timeout; a healthy SSE body resets it with
+// every chunk, so only a genuinely silent upstream trips it. It lives on the
+// Server (not a package constant) so tests can shorten it.
+const upstreamStallTimeout = 120 * time.Second
+
+// stallCloser closes the wrapped body when it stays silent past the window.
+// http.Response.Body is safe to Close concurrently with a blocked Read, and
+// the Close unblocks it, turning a wedged handler into an ordinary read error
+// the streaming loops already know how to report.
+type stallCloser struct {
+	body    io.ReadCloser
+	timeout time.Duration
+	timer   *time.Timer
+}
+
+func newStallCloser(body io.ReadCloser, timeout time.Duration) *stallCloser {
+	s := &stallCloser{body: body, timeout: timeout}
+	s.timer = time.AfterFunc(timeout, func() { _ = body.Close() })
+	return s
+}
+
+func (s *stallCloser) Read(p []byte) (int, error) {
+	n, err := s.body.Read(p)
+	if err == nil && n > 0 {
+		s.timer.Reset(s.timeout)
+	}
+	return n, err
+}
+
+func (s *stallCloser) Close() error {
+	s.timer.Stop()
+	return s.body.Close()
+}
+
 func New(registry *provider.Registry, mappings *config.MappingStore, secrets secret.Store, usageTracker *usage.SQLiteTracker, keys KeyVerifier) *Server {
-	return &Server{registry: registry, mappings: mappings, secrets: secrets, keys: keys, adapters: NewAdapterSet(&http.Client{Timeout: 120 * time.Second}), client: &http.Client{Timeout: 120 * time.Second}, usage: usageTracker}
+	client := upstreamClient()
+	return &Server{registry: registry, mappings: mappings, secrets: secrets, keys: keys, adapters: NewAdapterSet(client), client: client, usage: usageTracker, stallTimeout: upstreamStallTimeout}
+}
+
+// stallGuarded wraps a streaming upstream body so silence is fatal instead of
+// permanent. Non-streaming exchanges are left alone: their bodies are short
+// and the error surface is the client's own timeout.
+func (s *Server) stallGuarded(body io.ReadCloser) io.ReadCloser {
+	timeout := s.stallTimeout
+	if timeout <= 0 {
+		timeout = upstreamStallTimeout
+	}
+	return newStallCloser(body, timeout)
 }
 func (s *Server) Start(address string) error {
 	s.mu.Lock()
@@ -305,8 +377,15 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		flusher, _ := w.(http.Flusher)
 		buffer := make([]byte, 32*1024)
 		var captured strings.Builder
+		// A read error before EOF means the upstream stream was cut mid-flight.
+		// The bytes piped so far still go to the client (which can tell the
+		// stream never reached [DONE]), but the log must record the truncation:
+		// success=1 with no [DONE] looked like a healthy request while the
+		// client was busy retrying it.
+		var streamErr string
+		body := s.stallGuarded(response.Body)
 		for {
-			n, readErr := response.Body.Read(buffer)
+			n, readErr := body.Read(buffer)
 			if n > 0 {
 				_, _ = w.Write(buffer[:n])
 				captured.Write(buffer[:n])
@@ -318,8 +397,14 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			if readErr != nil {
+				streamErr = fmt.Sprintf("upstream stream ended early: %v", readErr)
 				break
 			}
+		}
+		_ = body.Close()
+		if streamErr != "" {
+			logEvent(false, captured.String(), streamErr, tokensFromResponse([]byte(captured.String())))
+			return
 		}
 		logEvent(true, captured.String(), "", tokensFromResponse([]byte(captured.String())))
 		return
@@ -447,8 +532,12 @@ func (s *Server) anthropicPassthrough(w http.ResponseWriter, r *http.Request, p 
 		flusher, _ := w.(http.Flusher)
 		buf := make([]byte, 32*1024)
 		var captured strings.Builder
+		// Same truncation bookkeeping as chatCompletions: a passthrough stream
+		// that dies mid-flight is a failed exchange, not a successful one.
+		var streamErr string
+		body := s.stallGuarded(resp.Body)
 		for {
-			n, readErr := resp.Body.Read(buf)
+			n, readErr := body.Read(buf)
 			if n > 0 {
 				_, _ = w.Write(buf[:n])
 				captured.Write(buf[:n])
@@ -460,8 +549,14 @@ func (s *Server) anthropicPassthrough(w http.ResponseWriter, r *http.Request, p 
 				break
 			}
 			if readErr != nil {
+				streamErr = fmt.Sprintf("upstream stream ended early: %v", readErr)
 				break
 			}
+		}
+		_ = body.Close()
+		if streamErr != "" {
+			logEvent(false, captured.String(), streamErr, tokensFromResponse([]byte(captured.String())))
+			return
 		}
 		logEvent(true, captured.String(), "", tokensFromResponse([]byte(captured.String())))
 		return
@@ -494,8 +589,25 @@ func (s *Server) anthropicViaOpenAI(w http.ResponseWriter, r *http.Request, p pr
 		Tools:       anthropicToolsToOpenAI(input.Tools),
 		ToolChoice:  anthropicToolChoiceToOpenAI(input.ToolChoice),
 	}
+	// Anthropic thinking shapes ({"type":"enabled",...}, Claude Code's
+	// {"type":"adaptive"}) are not valid on OpenAI-compatible upstreams,
+	// which validate type against enabled/disabled/auto; only the
+	// reasoning_effort analogue below is forwarded.
+	effort := thinkingToReasoningEffort(input.Thinking)
 	if input.MaxTokens > 0 {
 		openAIReq.MaxTokens = &input.MaxTokens
+	}
+	// A reasoning model spends its output budget on invisible thinking before
+	// emitting text, so a tight max_tokens yields an empty answer (Claude Code's
+	// permission classifier sends max_tokens:2112 and got content:[] at exactly
+	// 2112 output tokens, then hung and retried). Below the floor the reasoning
+	// analogue is dropped so the whole budget goes to the visible answer.
+	if input.MaxTokens > 0 && input.MaxTokens < reasoningFloorMaxTokens {
+		effort = ""
+		openAIReq.MaxTokens = ptrTo(reasoningFloorMaxTokens)
+	}
+	if effort != "" {
+		openAIReq.ReasoningEffort = &effort
 	}
 	if input.Stream {
 		// Anthropic reports usage on its own stream; an OpenAI-compatible upstream
@@ -527,7 +639,11 @@ func (s *Server) anthropicViaOpenAI(w http.ResponseWriter, r *http.Request, p pr
 		w.Header().Set("X-Accel-Buffering", "no")
 		w.WriteHeader(200)
 		var captured strings.Builder
-		tokens := pipeOpenAIStreamToAnthropic(w, response.Body, input.Model, &captured)
+		tokens, streamErr := pipeOpenAIStreamToAnthropic(w, s.stallGuarded(response.Body), input.Model, &captured)
+		if streamErr != nil {
+			logEvent(false, captured.String(), streamErr.Error(), tokens)
+			return
+		}
 		logEvent(true, captured.String(), "", tokens)
 		return
 	}
@@ -726,6 +842,30 @@ func anthropicToolChoiceToOpenAI(raw json.RawMessage) json.RawMessage {
 	}
 }
 
+// reasoningFloorMaxTokens is the smallest max_tokens forwarded to a reasoning
+// upstream. Claude Code's permission classifier asks for 2112; a reasoning
+// model burns that entirely on invisible thinking and returns an empty answer.
+const reasoningFloorMaxTokens = 8192
+
+func ptrTo[T any](v T) *T { return &v }
+
+// thinkingToReasoningEffort translates Anthropic's extended-thinking setting
+// into the reasoning_effort an OpenAI-compatible upstream understands. Only
+// adaptive-budget thinking has an effort analogue; a fixed budget or an
+// unknown shape maps to nothing rather than a guess.
+func thinkingToReasoningEffort(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var thinking struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &thinking); err != nil || thinking.Type != "enabled" {
+		return ""
+	}
+	return "medium"
+}
+
 func extractAnthropicSystem(raw json.RawMessage) string {
 	if len(raw) == 0 || string(raw) == "null" {
 		return ""
@@ -858,8 +998,12 @@ func openAIToolCalls(raw json.RawMessage) []openAIToolCall {
 // pipeOpenAIStreamToAnthropic reads OpenAI SSE chunks from body and writes
 // Anthropic SSE events to w, capturing the generated Anthropic SSE in captured.
 // It returns the upstream token usage, which the synthesized Anthropic events
-// do not carry (message_start is written before the upstream reports it).
-func pipeOpenAIStreamToAnthropic(w io.Writer, body io.ReadCloser, clientModel string, captured *strings.Builder) tokenUsage {
+// do not carry (message_start is written before the upstream reports it), and
+// the error that ended an incomplete stream: when the upstream body dies
+// mid-stream the closing events must not be emitted, or the client sees a
+// normal end-of-turn instead of a broken exchange and retries the request as
+// if nothing had happened.
+func pipeOpenAIStreamToAnthropic(w io.Writer, body io.ReadCloser, clientModel string, captured *strings.Builder) (tokenUsage, error) {
 	flusher, flushable := w.(http.Flusher)
 	msgID := fmt.Sprintf("msg_%x", time.Now().UnixNano())
 
@@ -884,8 +1028,11 @@ func pipeOpenAIStreamToAnthropic(w io.Writer, body io.ReadCloser, clientModel st
 
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 256*1024)
+	sawDone := false
 	blockStarted := false
+	thinkingStarted := false
 	blockIndex := 0
+	thinkingIndex := 0
 	textIndex := 0
 	var textBuf strings.Builder
 	var finishReason string
@@ -898,20 +1045,22 @@ func pipeOpenAIStreamToAnthropic(w io.Writer, body io.ReadCloser, clientModel st
 	tools := map[int]*toolBlock{}
 
 	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
+		data, ok := sseData(scanner.Text())
+		if !ok {
 			continue
 		}
-		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
+			sawDone = true
 			break
 		}
 
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content   string          `json:"content"`
-					ToolCalls json.RawMessage `json:"tool_calls"`
+					Content          string          `json:"content"`
+					ReasoningContent string          `json:"reasoning_content"`
+					Reasoning        string          `json:"reasoning"`
+					ToolCalls        json.RawMessage `json:"tool_calls"`
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
@@ -922,9 +1071,14 @@ func pipeOpenAIStreamToAnthropic(w io.Writer, body io.ReadCloser, clientModel st
 		}
 
 		content := ""
+		reasoning := ""
 		var calls json.RawMessage
 		if len(chunk.Choices) > 0 {
 			content = chunk.Choices[0].Delta.Content
+			reasoning = chunk.Choices[0].Delta.ReasoningContent
+			if reasoning == "" {
+				reasoning = chunk.Choices[0].Delta.Reasoning
+			}
 			calls = chunk.Choices[0].Delta.ToolCalls
 			if chunk.Choices[0].FinishReason != "" {
 				finishReason = chunk.Choices[0].FinishReason
@@ -932,6 +1086,48 @@ func pipeOpenAIStreamToAnthropic(w io.Writer, body io.ReadCloser, clientModel st
 		}
 		if chunk.Usage != nil {
 			usage = usage.merge(chunk.Usage.tokenUsage())
+		}
+
+		if reasoning != "" && !thinkingStarted {
+			thinkingStarted = true
+			thinkingIndex = blockIndex
+			blockIndex++
+			anthropicSSE(dest, "content_block_start", map[string]any{
+				"type":  "content_block_start",
+				"index": thinkingIndex,
+				"content_block": map[string]any{
+					"type": "thinking", "thinking": "", "signature": "",
+				},
+			})
+		}
+		if reasoning != "" {
+			anthropicSSE(dest, "content_block_delta", map[string]any{
+				"type":  "content_block_delta",
+				"index": thinkingIndex,
+				"delta": map[string]any{"type": "thinking_delta", "thinking": reasoning},
+			})
+			if flushable {
+				flusher.Flush()
+			}
+		}
+
+		// Anthropic content blocks are sequential. Close the synthetic thinking
+		// block before opening the first visible text or tool-use block.
+		if thinkingStarted && (content != "" || len(calls) > 0) {
+			anthropicSSE(dest, "content_block_delta", map[string]any{
+				"type":  "content_block_delta",
+				"index": thinkingIndex,
+				"delta": map[string]any{
+					"type": "signature_delta", "signature": "agent-router-openai-reasoning",
+				},
+			})
+			anthropicSSE(dest, "content_block_stop", map[string]any{
+				"type": "content_block_stop", "index": thinkingIndex,
+			})
+			thinkingStarted = false
+			if flushable {
+				flusher.Flush()
+			}
 		}
 
 		if content != "" && !blockStarted {
@@ -982,6 +1178,51 @@ func pipeOpenAIStreamToAnthropic(w io.Writer, body io.ReadCloser, clientModel st
 			if flushable {
 				flusher.Flush()
 			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		// The upstream body died mid-stream. Anthropic's protocol has an error
+		// event for exactly this; emitting it lets the client distinguish a
+		// broken exchange from a normal end-of-turn instead of retrying blind.
+		anthropicSSE(dest, "error", map[string]any{
+			"type": "error", "error": map[string]any{"type": "api_error", "message": "upstream stream ended early: " + err.Error()},
+		})
+		if flushable {
+			flusher.Flush()
+		}
+		return usage, fmt.Errorf("upstream stream ended early: %w", err)
+	}
+	if !sawDone {
+		// No [DONE] and no scanner error: the body simply ended, which a
+		// well-behaved OpenAI-compatible upstream never does on a live stream.
+		// Some emit only a finish_reason chunk, so treat a finish as delivered
+		// only when one actually arrived.
+		if finishReason == "" {
+			anthropicSSE(dest, "error", map[string]any{
+				"type": "error", "error": map[string]any{"type": "api_error", "message": "upstream stream ended without a finish_reason"},
+			})
+			if flushable {
+				flusher.Flush()
+			}
+			return usage, fmt.Errorf("upstream stream ended without a finish_reason")
+		}
+		sawDone = true
+	}
+
+	if thinkingStarted {
+		anthropicSSE(dest, "content_block_delta", map[string]any{
+			"type":  "content_block_delta",
+			"index": thinkingIndex,
+			"delta": map[string]any{
+				"type": "signature_delta", "signature": "agent-router-openai-reasoning",
+			},
+		})
+		anthropicSSE(dest, "content_block_stop", map[string]any{
+			"type": "content_block_stop", "index": thinkingIndex,
+		})
+		if flushable {
+			flusher.Flush()
 		}
 	}
 
@@ -1047,7 +1288,7 @@ func pipeOpenAIStreamToAnthropic(w io.Writer, body io.ReadCloser, clientModel st
 	if flushable {
 		flusher.Flush()
 	}
-	return usage
+	return usage, nil
 }
 
 func anthropicSSE(w io.Writer, event string, data map[string]any) {

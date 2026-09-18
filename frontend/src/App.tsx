@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Card,
@@ -29,6 +29,7 @@ import {
   Eye,
   EyeOff,
   Folder,
+  FolderSymlink,
   GitCompare,
   Globe2,
   KeyRound,
@@ -39,6 +40,7 @@ import {
   Plus,
   Radio,
   Sparkles,
+  SquareTerminal,
   Trash2,
   Variable,
 } from "lucide-react";
@@ -82,6 +84,7 @@ import mimocodeIcon from "./assets/mimocode.png";
 import claudeIcon from "./assets/claude.png";
 import ompIcon from "./assets/omp.svg";
 import { Sidebar, type Page } from "./components/Sidebar";
+import { SettingsModal } from "./components/SettingsModal";
 import {
   ProviderDrawer,
   type ProviderFormState,
@@ -92,16 +95,11 @@ import {
   type MappingFormState,
 } from "./components/MappingDrawer";
 import { FieldSelect } from "./components/FieldSelect";
-
-const num = new Intl.NumberFormat("en-US");
-const compactNum = new Intl.NumberFormat("en-US", {
-  maximumFractionDigits: 1,
-});
-function formatTokenCount(value: number) {
-  if (value >= 10_000_000) return `${compactNum.format(value / 1_000_000)}M`;
-  if (value >= 1_000) return `${compactNum.format(value / 1_000)}K`;
-  return num.format(value);
-}
+import { Playground } from "./components/Playground";
+import { DateRangeField } from "./components/DateRangeField";
+import { SkillsPanel } from "./components/SkillsPanel";
+import { SkillsLinkModal } from "./components/SkillsLinkModal";
+import { formatTokenCount, num } from "./lib/format";
 function TokenValue({
   value,
   as = "strong",
@@ -163,6 +161,15 @@ const pageMeta: Record<Page, { title: string; description: string }> = {
     title: "Agent",
     description: "为各 Agent CLI 生成指向本地网关的配置模板。",
   },
+  skills: {
+    title: "Skills",
+    description:
+      "集中查看和管理本机的 agent skills（~/.agents/skills 与插件目录）。",
+  },
+  playground: {
+    title: "演练场",
+    description: "选择模型后直接对话，实时查看流式输出。",
+  },
 };
 
 async function copyToClipboard(value: string): Promise<boolean> {
@@ -177,11 +184,22 @@ async function copyToClipboard(value: string): Promise<boolean> {
     }
   }
 }
+// applyTheme mirrors the saved preference onto <html>; HeroUI derives its
+// palette from the dark class / data-theme attribute on the root element.
+function applyTheme(theme: string) {
+  document.documentElement.classList.toggle("dark", theme === "dark");
+  document.documentElement.dataset.theme = theme;
+}
+
 export default function App() {
   const [page, setPage] = useState<Page>("overview");
   const [collapsed, setCollapsed] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(248);
+  const [sidebarWidth, setSidebarWidth] = useState(300);
   const resizing = useRef(false);
+  // 会话清空按钮在页面头部，但状态归 Playground 持有；它挂载时把清空回调
+  // 注册到这里，头部按钮直接调用。
+  const playgroundReset = useRef<(() => void) | null>(null);
+  const [playgroundHasContent, setPlaygroundHasContent] = useState(false);
   const [data, setData] = useState<Bootstrap | null>(null);
   const [requestLogs, setRequestLogs] = useState<RequestLogPage | null>(null);
   const [logFilter, setLogFilter] = useState<RequestLogFilter>({
@@ -189,6 +207,8 @@ export default function App() {
     model: "",
     provider: "",
     status: "",
+    from: "",
+    to: "",
   });
   const [proxyRunning, setProxyRunningState] = useState(true);
   const [togglingProxy, setTogglingProxy] = useState(false);
@@ -204,11 +224,15 @@ export default function App() {
   const [deletingProvider, setDeletingProvider] = useState(false);
   const [keyToDelete, setKeyToDelete] = useState<LocalAPIKey | null>(null);
   const [deletingKey, setDeletingKey] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
     bootstrap().then(setData);
   }, []);
   useEffect(() => {
     if (data) setProxyRunningState(data.proxyRunning);
+  }, [data]);
+  useEffect(() => {
+    if (data) applyTheme(data.settings.theme);
   }, [data]);
   useEffect(() => {
     if (page !== "logs") return;
@@ -222,16 +246,42 @@ export default function App() {
     };
     const onUp = () => {
       resizing.current = false;
+      document.body.classList.remove("pane-resizing");
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("blur", onUp);
     return () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("blur", onUp);
     };
   }, []);
+  // 自动派生每个可路由模型的映射；用户可在抽屉内改名/启停。
+  // 已保存的映射与提供商模型自动派生合并：每个「提供商+上游模型」对优先取
+  // 保存条目（含已停用的，用于显式压制自动映射），其余模型补自动映射，
+  // 与后端 effectiveMappings 的语义一致。
+  const ensuredMappings = useMemo(() => {
+    const mappings = data?.mappings ?? [];
+    const providers = data?.providers ?? [];
+    const byRoute: Record<string, true> = {};
+    for (const m of mappings) {
+      byRoute[`${m.providerId}\u0000${m.upstreamModel}`] = true;
+    }
+    const merged = [...mappings];
+    const seen = new Set(mappings.map((m) => m.clientModel));
+    for (const auto of deriveAutoMappings(providers)) {
+      if (byRoute[`${auto.providerId}\u0000${auto.upstreamModel}`]) continue;
+      if (seen.has(auto.clientModel)) continue;
+      merged.push(auto);
+      seen.add(auto.clientModel);
+    }
+    return merged.sort((a, b) => a.clientModel.localeCompare(b.clientModel));
+  }, [data?.mappings, data?.providers]);
   if (!data) return <main className="loading">正在加载 Agent Router…</main>;
   const setProvider = async (id: string, enabled: boolean) => {
     await toggleProvider(id, enabled);
@@ -314,10 +364,6 @@ export default function App() {
       ].sort((a, b) => a.clientModel.localeCompare(b.clientModel)),
     });
   };
-  // 自动派生每个可路由模型的映射；用户可在抽屉内改名/启停。
-  const ensuredMappings = data.mappings.length
-    ? data.mappings
-    : deriveAutoMappings(data.providers);
   const persistProvider = async (form: ProviderFormState) => {
     const id =
       editingProvider?.id ??
@@ -375,19 +421,32 @@ export default function App() {
         mappingCount={ensuredMappings.filter((m) => m.enabled).length}
         proxyRunning={proxyRunning}
         width={sidebarWidth}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
       {!collapsed && (
         <div
           className="resize-handle"
           onMouseDown={(e) => {
             e.preventDefault();
+            // 松手落在窗口外时 mouseup 会丢、分割线收不回去；补挂的
+            // pointerup/blur 兜底清理（见下方 useEffect 的 onUp）。
             resizing.current = true;
+            // body 类驱动拖动中分割线的显隐（见 styles.css 的 resize-handle::after）。
+            document.body.classList.add("pane-resizing");
             document.body.style.cursor = "col-resize";
             document.body.style.userSelect = "none";
           }}
         />
       )}
-      <main className={page === "logs" ? "content logs-page" : "content"}>
+      <main
+        className={
+          page === "logs"
+            ? "content logs-page"
+            : page === "playground"
+              ? "content chat-page"
+              : "content"
+        }
+      >
         <header>
           <div>
             <h1>{currentPage.title}</h1>
@@ -424,67 +483,95 @@ export default function App() {
               添加提供商
             </Button>
           )}
+          {page === "playground" && (
+            <button
+              type="button"
+              className="playground-clear"
+              aria-label="清空对话"
+              disabled={!playgroundHasContent}
+              onClick={() => playgroundReset.current?.()}
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
         </header>
-        {page === "overview" ? (
-          <Overview data={data} proxyRunning={proxyRunning} />
-        ) : page === "usage" ? (
-          <UsagePanel />
-        ) : page === "providers" ? (
-          <Providers
-            providers={data.providers}
-            onToggle={setProvider}
-            onEdit={(provider) => setEditingProvider(provider)}
-            onDelete={(provider) => setProviderToDelete(provider)}
-          />
-        ) : page === "mappings" ? (
-          <Mappings
-            providers={data.providers}
-            mappings={ensuredMappings}
-            onEdit={(m) => setMappingDraft({ mapping: m })}
-          />
-        ) : page === "keys" ? (
-          <LocalKeys
-            keys={data.apiKeys}
-            onToggle={setLocalKey}
-            onCreate={createLocalKey}
-            onDelete={(key) => setKeyToDelete(key)}
-          />
-        ) : page === "logs" ? (
-          <RequestLogs
-            logs={requestLogs}
-            tokens={data.apiKeys}
-            models={ensuredMappings}
-            providers={data.providers}
-            filter={logFilter}
-            onFilterChange={setLogFilter}
-            onSearch={() => {
-              void listRequestLogs(1, requestLogPageSize, logFilter).then(
-                setRequestLogs,
-              );
-            }}
-            onReset={() => {
-              const empty = {
-                token: "",
-                model: "",
-                provider: "",
-                status: "",
-              };
-              setLogFilter(empty);
-              void listRequestLogs(1, requestLogPageSize, empty).then(
-                setRequestLogs,
-              );
-            }}
-            onPageChange={(nextPage) => {
-              void listRequestLogs(
-                nextPage,
-                requestLogPageSize,
-                logFilter,
-              ).then(setRequestLogs);
-            }}
-          />
-        ) : (
-          <AgentTemplates />
-        )}
+        <div className="page-scroll">
+          {page === "overview" ? (
+            <Overview data={data} proxyRunning={proxyRunning} />
+          ) : page === "usage" ? (
+            <UsagePanel />
+          ) : page === "providers" ? (
+            <Providers
+              providers={data.providers}
+              onToggle={setProvider}
+              onEdit={(provider) => setEditingProvider(provider)}
+              onDelete={(provider) => setProviderToDelete(provider)}
+            />
+          ) : page === "mappings" ? (
+            <Mappings
+              providers={data.providers}
+              mappings={ensuredMappings}
+              onEdit={(m) => setMappingDraft({ mapping: m })}
+            />
+          ) : page === "keys" ? (
+            <LocalKeys
+              keys={data.apiKeys}
+              onToggle={setLocalKey}
+              onCreate={createLocalKey}
+              onDelete={(key) => setKeyToDelete(key)}
+            />
+          ) : page === "skills" ? (
+            <SkillsPanel />
+          ) : page === "playground" ? (
+            <Playground
+              onRegisterReset={(reset) => {
+                playgroundReset.current = reset;
+              }}
+              onHasContentChange={setPlaygroundHasContent}
+              models={ensuredMappings.filter((m) => m.enabled)}
+              providers={data.providers}
+              keys={data.apiKeys}
+              proxyRunning={proxyRunning}
+            />
+          ) : page === "logs" ? (
+            <RequestLogs
+              logs={requestLogs}
+              tokens={data.apiKeys}
+              models={ensuredMappings}
+              providers={data.providers}
+              filter={logFilter}
+              onFilterChange={setLogFilter}
+              onSearch={() => {
+                void listRequestLogs(1, requestLogPageSize, logFilter).then(
+                  setRequestLogs,
+                );
+              }}
+              onReset={() => {
+                const empty = {
+                  token: "",
+                  model: "",
+                  provider: "",
+                  status: "",
+                  from: "",
+                  to: "",
+                };
+                setLogFilter(empty);
+                void listRequestLogs(1, requestLogPageSize, empty).then(
+                  setRequestLogs,
+                );
+              }}
+              onPageChange={(nextPage) => {
+                void listRequestLogs(
+                  nextPage,
+                  requestLogPageSize,
+                  logFilter,
+                ).then(setRequestLogs);
+              }}
+            />
+          ) : (
+            <AgentTemplates />
+          )}
+        </div>
       </main>
       <ProviderDrawer
         provider={editingProvider ?? null}
@@ -499,6 +586,15 @@ export default function App() {
         isOpen={mappingDraft !== undefined}
         onClose={() => setMappingDraft(undefined)}
         onSave={persistMapping}
+      />
+      <SettingsModal
+        isOpen={settingsOpen}
+        settings={data.settings}
+        onClose={() => setSettingsOpen(false)}
+        onSaved={(next) => {
+          setData({ ...data, settings: next });
+          applyTheme(next.theme);
+        }}
       />
       <Modal
         isOpen={providerToDelete !== null}
@@ -672,17 +768,17 @@ function RequestLogs({
     model: string;
     kind: "输入" | "输出";
   } | null>(null);
-  const [copiedOutput, setCopiedOutput] = useState(false);
+  const [copied, setCopied] = useState(false);
   const headRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!copiedOutput) return;
-    const timer = setTimeout(() => setCopiedOutput(false), 1400);
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1400);
     return () => clearTimeout(timer);
-  }, [copiedOutput]);
-  const copyOutput = async () => {
-    if (selectedPayload?.kind !== "输出") return;
-    if (await copyToClipboard(selectedPayload.content)) setCopiedOutput(true);
+  }, [copied]);
+  const copyPayload = async () => {
+    if (!selectedPayload) return;
+    if (await copyToClipboard(selectedPayload.content)) setCopied(true);
   };
 
   if (!logs) return <div className="loading">正在加载请求日志…</div>;
@@ -693,6 +789,7 @@ function RequestLogs({
           label="Token"
           placeholder="选择 Token"
           isClearable
+          popoverClassName="request-log-select-popover"
           value={filter.token || null}
           onChange={(key) => onFilterChange({ ...filter, token: key ?? "" })}
           options={tokens.map((t) => ({ value: t.id, label: t.name }))}
@@ -701,7 +798,9 @@ function RequestLogs({
           label="模型"
           placeholder="选择映射模型"
           isClearable
+          popoverClassName="request-log-select-popover"
           value={filter.model || null}
+          renderValue={(model) => model}
           onChange={(key) => onFilterChange({ ...filter, model: key ?? "" })}
           options={models.map((m) => ({
             value: m.clientModel,
@@ -720,6 +819,7 @@ function RequestLogs({
           label="提供商"
           placeholder="选择提供商"
           isClearable
+          popoverClassName="request-log-select-popover"
           value={filter.provider || null}
           onChange={(key) => onFilterChange({ ...filter, provider: key ?? "" })}
           options={providers.map((p) => ({
@@ -731,12 +831,18 @@ function RequestLogs({
           label="状态"
           placeholder="选择状态"
           isClearable
+          popoverClassName="request-log-select-popover"
           value={filter.status || null}
           onChange={(key) => onFilterChange({ ...filter, status: key ?? "" })}
           options={[
             { value: "success", label: "成功" },
             { value: "failed", label: "失败" },
           ]}
+        />
+        <DateRangeField
+          from={filter.from}
+          to={filter.to}
+          onChange={(from, to) => onFilterChange({ ...filter, from, to })}
         />
         <Button size="sm" variant="primary" onPress={onSearch}>
           查询
@@ -1016,7 +1122,7 @@ function RequestLogs({
         onOpenChange={(isOpen) => {
           if (!isOpen) {
             setSelectedPayload(null);
-            setCopiedOutput(false);
+            setCopied(false);
           }
         }}
       >
@@ -1035,24 +1141,24 @@ function RequestLogs({
                 </pre>
               </Modal.Body>
               <Modal.Footer>
-                {selectedPayload?.kind === "输出" && (
-                  <Tooltip>
-                    <Tooltip.Trigger>
-                      <Button
-                        isIconOnly
-                        size="sm"
-                        variant="secondary"
-                        onPress={() => void copyOutput()}
-                        aria-label="复制完整输出"
-                      >
-                        <Copy size={15} />
-                      </Button>
-                    </Tooltip.Trigger>
-                    <Tooltip.Content>
-                      {copiedOutput ? "已复制" : "复制完整输出"}
-                    </Tooltip.Content>
-                  </Tooltip>
-                )}
+                <Tooltip>
+                  <Tooltip.Trigger>
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      variant="secondary"
+                      onPress={() => void copyPayload()}
+                      aria-label={`复制完整${selectedPayload?.kind ?? ""}`}
+                    >
+                      <Copy size={15} />
+                    </Button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content>
+                    {copied
+                      ? "已复制"
+                      : `复制完整${selectedPayload?.kind ?? ""}`}
+                  </Tooltip.Content>
+                </Tooltip>
                 <Button
                   size="sm"
                   variant="secondary"
@@ -1091,6 +1197,9 @@ function formatJSON(value: string): string {
     return value;
   }
 }
+// Backend returns model stats ordered by request count, so the panel keeps the
+// most-used few instead of growing without bound as one-off models accumulate.
+const MODEL_USAGE_LIMIT = 6;
 function UsagePanel() {
   const [breakdown, setBreakdown] = useState<UsageBreakdown | null>(null);
   useEffect(() => {
@@ -1108,6 +1217,7 @@ function UsagePanel() {
     { requests: 0, input: 0, output: 0, cached: 0, reasoning: 0 },
   );
   const totalTokens = totals.input + totals.output;
+  const cacheRate = totals.input > 0 ? (totals.cached / totals.input) * 100 : 0;
   return (
     <section className="usage-panel">
       <div className="usage-token-cards">
@@ -1118,8 +1228,8 @@ function UsagePanel() {
               <TokenValue value={totals.input} />
             </div>
             <small>
-              缓存 <TokenValue value={totals.cached} as="span" /> · 推理{" "}
-              <TokenValue value={totals.reasoning} as="span" />
+              缓存 <TokenValue value={totals.cached} as="span" /> · 命中率{" "}
+              {cacheRate.toFixed(1)}%
             </small>
           </Card.Content>
         </Card>
@@ -1129,7 +1239,10 @@ function UsagePanel() {
               <span>输出 Tokens</span>
               <TokenValue value={totals.output} />
             </div>
-            <small>随响应生成的 Token</small>
+            <small>
+              推理 <TokenValue value={totals.reasoning} as="span" /> ·
+              随响应生成 的 Token
+            </small>
           </Card.Content>
         </Card>
         <Card className="metric">
@@ -1173,7 +1286,7 @@ function UsagePanel() {
               <p className="provider-model-empty">暂无用量数据</p>
             ) : (
               <UsageStatList
-                stats={breakdown.models}
+                stats={breakdown.models.slice(0, MODEL_USAGE_LIMIT)}
                 totalTokens={totalTokens}
               />
             )}
@@ -1211,6 +1324,8 @@ function UsageStatList({
         const tokens = s.inputTokens + s.outputTokens;
         const share = totalTokens ? (tokens / totalTokens) * 100 : 0;
         const successRate = s.requests ? (s.successes / s.requests) * 100 : 0;
+        const cacheRate =
+          s.inputTokens > 0 ? (s.cachedInputTokens / s.inputTokens) * 100 : 0;
         return (
           <div className="usage-stat" key={s.key}>
             <div className="usage-stat-top">
@@ -1230,8 +1345,24 @@ function UsageStatList({
               <span style={{ width: `${(tokens / totalTokens) * 100}%` }} />
             </div>
             <div className="usage-stat-meta">
-              <span>{num.format(s.requests)} 次请求</span>
-              <span>成功率 {successRate.toFixed(0)}%</span>
+              <span>
+                {num.format(s.requests)} 次请求 · 成功率{" "}
+                {successRate.toFixed(0)}%
+              </span>
+              <span>
+                输出 <TokenValue value={s.outputTokens} as="span" /> ·{" "}
+                <Tooltip>
+                  <Tooltip.Trigger>
+                    <span className="usage-token-value">
+                      命中率 {cacheRate.toFixed(0)}%
+                    </span>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content>
+                    缓存 {num.format(s.cachedInputTokens)} / 输入{" "}
+                    {num.format(s.inputTokens)}
+                  </Tooltip.Content>
+                </Tooltip>
+              </span>
             </div>
           </div>
         );
@@ -1416,26 +1547,28 @@ function Overview({
             </div>
             <div className="code-box">
               <span>BaseUrl</span>
-              <code>{baseURL}</code>
-              <Tooltip>
-                <Tooltip.Trigger>
-                  <Button
-                    isIconOnly
-                    size="sm"
-                    variant="ghost"
-                    className="code-box-copy"
-                    onPress={() =>
-                      void copyToClipboard(baseURL).then(setBaseURLCopied)
-                    }
-                    aria-label="复制 BaseUrl"
-                  >
-                    <Copy size={14} />
-                  </Button>
-                </Tooltip.Trigger>
-                <Tooltip.Content>
-                  {baseURLCopied ? "已复制" : "复制 BaseUrl"}
-                </Tooltip.Content>
-              </Tooltip>
+              <div className="code-box-value">
+                <Tooltip>
+                  <Tooltip.Trigger>
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      variant="ghost"
+                      className="code-box-copy"
+                      onPress={() =>
+                        void copyToClipboard(baseURL).then(setBaseURLCopied)
+                      }
+                      aria-label="复制 BaseUrl"
+                    >
+                      <Copy size={14} />
+                    </Button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content>
+                    {baseURLCopied ? "已复制" : "复制 BaseUrl"}
+                  </Tooltip.Content>
+                </Tooltip>
+                <code>{baseURL}</code>
+              </div>
             </div>
             <div className="code-box">
               <span>Model</span>
@@ -1981,6 +2114,7 @@ const toolIcons: Record<string, string> = {
 function AgentTemplates() {
   const [previews, setPreviews] = useState<ToolPreview[] | null>(null);
   const [configuringId, setConfiguringId] = useState<string | null>(null);
+  const [skillsToolId, setSkillsToolId] = useState<string | null>(null);
   const [configTab, setConfigTab] = useState("models");
   const [writingId, setWritingId] = useState<string | null>(null);
   const [written, setWritten] = useState<string | null>(null);
@@ -2137,6 +2271,16 @@ function AgentTemplates() {
                 <GitCompare size={14} />
                 配置
               </Button>
+              {tool.skillsPath && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onPress={() => setSkillsToolId(tool.id)}
+                >
+                  <FolderSymlink size={14} />
+                  Skills
+                </Button>
+              )}
             </div>
           </article>
         ))}
@@ -2295,6 +2439,12 @@ function AgentTemplates() {
           </Modal.Container>
         </Modal.Backdrop>
       </Modal>
+      <SkillsLinkModal
+        toolId={skillsToolId ?? ""}
+        toolName={previews.find((t) => t.id === skillsToolId)?.name ?? ""}
+        isOpen={skillsToolId !== null}
+        onClose={() => setSkillsToolId(null)}
+      />
     </section>
   );
 }
