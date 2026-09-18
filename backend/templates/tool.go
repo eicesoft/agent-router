@@ -58,6 +58,13 @@ type Tool struct {
 	// their routable models flatly. The list is catalog-driven so new slots —
 	// or new tools reusing an env-slot shape — ship without code changes.
 	ModelSlots []ModelSlot
+
+	// SlotBaseline is the per-slot model id already present in Config, keyed
+	// by slot, read at resolve time. It is the base layer of the effective
+	// slot assignment: re-opening the config must show what the user last
+	// saved, not the catalog-order fallback, or every write looks lost. Empty
+	// when the file is absent, unparsable, or a slot was never written.
+	SlotBaseline map[string]string
 }
 
 // ModelSlot is one named model assignment a tool's config exposes: the key
@@ -119,7 +126,60 @@ func Resolve(t Tool) Tool {
 	if t.skillsRel != "" {
 		t.SkillsDir = filepath.Join(home, t.skillsRel)
 	}
+	t.SlotBaseline = readSlotBaseline(t)
 	return t
+}
+
+// readSlotBaseline reads the slot assignments already present in the tool's
+// config, so a preview renders the user's saved choice instead of the
+// catalog-order fallback. Two shapes carry a slot today: Claude Code stores each
+// slot as ANTHROPIC_DEFAULT_<KEY>_MODEL in settings.json's env block, and Codex
+// keeps its single MODEL slot in config.toml's top-level model key. A missing,
+// unparsable, or slot-less file yields an empty map, which leaves every slot on
+// the fallback.
+func readSlotBaseline(t Tool) map[string]string {
+	if len(t.ModelSlots) == 0 || t.Config == "" {
+		return nil
+	}
+	data, err := os.ReadFile(t.Config)
+	if err != nil {
+		return nil
+	}
+	switch t.Shape {
+	case "claude-env":
+		return readClaudeSlotBaseline(data, t)
+	case "codex-toml":
+		// Codex 的 model 是单个顶层标量，所以只有一个名为 MODEL 的槽位。
+		model := readCodexModel(data)
+		if model == "" {
+			return nil
+		}
+		return map[string]string{"MODEL": model}
+	}
+	return nil
+}
+
+// readClaudeSlotBaseline reads the ANTHROPIC_DEFAULT_<KEY>_MODEL values out of
+// settings.json's env block.
+func readClaudeSlotBaseline(data []byte, t Tool) map[string]string {
+	document, ok := parseDoc(data)
+	if !ok {
+		return nil
+	}
+	env, ok := document.vals["env"].(*doc)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string, len(t.ModelSlots))
+	for _, slot := range t.ModelSlots {
+		if value, ok := env.vals["ANTHROPIC_DEFAULT_"+slot.Key+"_MODEL"].(string); ok && value != "" {
+			out[slot.Key] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Installed reports whether the tool's binary is on PATH.
@@ -153,6 +213,16 @@ type Preview struct {
 	// SlotModels is the effective slot -> model id assignment the Content was
 	// rendered from, so the UI can reflect (and restore) the default mapping.
 	SlotModels map[string]string `json:"slotModels"`
+	// Profiles lists the per-model files a write also produces (Codex only), so
+	// the UI can show which `--profile` names become available.
+	Profiles []ProfilePreview `json:"profiles"`
+	// SelectedModels is the initial checked set for the model checklist. Its
+	// meaning depends on the tool: for ai-sdk/pi it defaults to every routable
+	// model (the config lists candidates), for Codex it comes from the profiles
+	// already on disk (the checklist chooses which files to generate, and
+	// defaulting to all would write dozens). The UI must start from this rather
+	// than assuming "all", or the two meanings cannot both be right.
+	SelectedModels []string `json:"selectedModels"`
 }
 
 // Generator renders and merges a single gateway provider into each tool's
@@ -230,22 +300,34 @@ func (g *Generator) models() []Model {
 }
 
 // SlotModels reports the effective per-slot assignment: explicit selections
-// where present, otherwise the automatic fallback. Cleared slots are omitted.
+// where present, then the value already written to the tool's config, and the
+// catalog-order fallback last. Cleared slots are omitted.
 func (g *Generator) SlotModels(t Tool) map[string]string {
 	out := make(map[string]string, len(t.ModelSlots))
 	for i, slot := range t.ModelSlots {
-		if model := g.slotModel(slot.Key, i); model != "" {
+		if model := g.slotModel(t, slot.Key, i); model != "" {
 			out[slot.Key] = model
 		}
 	}
 	return out
 }
 
-// slotModel resolves one slot: explicit selection when slotModels is set,
-// otherwise the catalog-order fallback (slot i -> routable[i]).
-func (g *Generator) slotModel(slot string, index int) string {
+// slotModel resolves one slot in precedence order: an explicit selection when
+// slotModels is set, then the value the config file already holds (so a saved
+// assignment survives re-opening the panel), then the catalog-order fallback
+// (slot i -> routable[i]).
+//
+// The disk layer deliberately outranks the fallback: the fallback is derived
+// from the current routable list, so once the user picks a model for a slot,
+// re-deriving it would silently re-point the slot at a different model and
+// make the saved choice look lost. A slot absent from the file stays on the
+// fallback, which is what an unwritten slot means.
+func (g *Generator) slotModel(t Tool, slot string, index int) string {
 	if g.slotModels != nil {
 		return g.slotModels[slot]
+	}
+	if model := t.SlotBaseline[slot]; model != "" {
+		return model
 	}
 	return modelAt(g.routable, index)
 }

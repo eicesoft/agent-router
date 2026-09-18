@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.52
+	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/wailsapp/wails/v2 v2.14.0
 	golang.org/x/net v0.56.0
 	golang.org/x/sys v0.46.0

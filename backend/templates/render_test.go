@@ -23,6 +23,90 @@ func TestEnvForUsesValidShellIdentifier(t *testing.T) {
 	}
 }
 
+// TestSlotBaselineSurvivesReopen guards the persistence contract: a slot the
+// user saved to settings.json must render back from disk on the next preview,
+// not from the catalog-order fallback. Without it, every write looks lost the
+// moment the panel is reopened, because the fallback is re-derived from the
+// current (sorted) routable list.
+func TestSlotBaselineSurvivesReopen(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	target := filepath.Join(dir, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	saved := `{"env":{"ANTHROPIC_DEFAULT_OPUS_MODEL":"chosen/opus","ANTHROPIC_DEFAULT_OPUS_MODEL_NAME":"chosen/opus"}}`
+	if err := os.WriteFile(target, []byte(saved), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := Tool{
+		ID:         ToolClaude,
+		Name:       "Claude Code",
+		CLI:        "claude",
+		configRel:  ".claude/settings.json",
+		Shape:      "claude-env",
+		ModelSlots: claudeSlots(),
+	}
+	// The fallback for index 2 (OPUS) is "aaa/fallback" — deliberately not the
+	// saved value, so a regression cannot pass by coincidence.
+	g := NewGenerator("http://127.0.0.1:9400", "agent-router", []Model{
+		{ID: "aaa/fallback", Name: "aaa/fallback"},
+		{ID: "bbb/fallback", Name: "bbb/fallback"},
+		{ID: "ccc/fallback", Name: "ccc/fallback"},
+		{ID: "ddd/fallback", Name: "ddd/fallback"},
+	})
+
+	resolved := Resolve(tool)
+	if got := resolved.SlotBaseline["OPUS"]; got != "chosen/opus" {
+		t.Fatalf("SlotBaseline[OPUS] = %q, want the on-disk value", got)
+	}
+	if got := g.SlotModels(resolved)["OPUS"]; got != "chosen/opus" {
+		t.Errorf("SlotModels()[OPUS] = %q, want the saved value to win over the fallback", got)
+	}
+
+	// A slot with no on-disk entry still falls back to catalog order.
+	if got := g.SlotModels(resolved)["HAIKU"]; got != "bbb/fallback" {
+		t.Errorf("SlotModels()[HAIKU] = %q, want the catalog-order fallback", got)
+	}
+
+	// An explicit selection still outranks both layers.
+	explicit := g.WithSlotModels(map[string]string{"OPUS": "explicit/pick"})
+	if got := explicit.SlotModels(resolved)["OPUS"]; got != "explicit/pick" {
+		t.Errorf("SlotModels()[OPUS] = %q, want the explicit selection to win", got)
+	}
+}
+
+// TestSlotBaselineAbsentFile checks the empty cases: no file, unparsable file,
+// and a non-env shape all leave the baseline nil so rendering is unaffected.
+func TestSlotBaselineAbsentFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	tool := Tool{
+		ID:         ToolClaude,
+		CLI:        "claude",
+		configRel:  ".claude/settings.json",
+		Shape:      "claude-env",
+		ModelSlots: claudeSlots(),
+	}
+	if got := Resolve(tool).SlotBaseline; got != nil {
+		t.Errorf("SlotBaseline with no config = %v, want nil", got)
+	}
+
+	target := filepath.Join(dir, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("{ not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := Resolve(tool).SlotBaseline; got != nil {
+		t.Errorf("SlotBaseline with unparsable config = %v, want nil", got)
+	}
+}
+
 func TestMergeClaudeSlots(t *testing.T) {
 	g := NewGenerator("http://127.0.0.1:9400", "agent-router", []Model{
 		{ID: "bl/ZHIPU/GLM-5.3", Name: "GLM-5.3"},

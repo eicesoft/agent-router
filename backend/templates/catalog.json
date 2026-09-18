@@ -55,6 +55,15 @@
         { "key": "OPUS", "label": "Opus" },
         { "key": "SONNET", "label": "Sonnet" }
       ]
+    },
+    {
+      "id": "codex",
+      "name": "Codex",
+      "cli": "codex",
+      "configRel": ".codex/config.toml",
+      "multiProvider": true,
+      "shape": "codex-toml",
+      "modelSlots": [{ "key": "MODEL", "label": "默认模型" }]
     }
   ]
 }

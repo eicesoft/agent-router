@@ -21,6 +21,11 @@ func renderFor(g *Generator, t Tool) string {
 	if t.Shape == "omp" {
 		return renderYAML(g, t)
 	}
+	// Codex 的 config.toml 不是 JSON，走不了下面的 parseDoc 路径；交给专门的
+	// TOML 分支，避免解析失败后把用户的 TOML 覆盖成 JSON。
+	if t.Shape == "codex-toml" {
+		return renderCodexTOML(g, t)
+	}
 	if t.Config != "" {
 		if data, err := os.ReadFile(t.Config); err == nil && len(bytes.TrimSpace(data)) > 0 {
 			if document, ok := parseDoc(data); ok {
@@ -156,6 +161,9 @@ func gatewayBody(g *Generator) []byte {
 // mergeProvider stamps the gateway provider into the tool's document,
 // dispatched by the tool's declared config shape. Each branch swaps in the
 // right provider key so writes are idempotent.
+//
+// Only the JSON-shaped tools reach here: renderFor handles "omp" (YAML) and
+// "codex-toml" before parsing, since neither is a JSON document.
 func mergeProvider(document *doc, g *Generator, t Tool) {
 	switch t.Shape {
 	case "ai-sdk":
@@ -249,7 +257,7 @@ func mergeClaude(document *doc, g *Generator, t Tool) {
 	for i, slot := range t.ModelSlots {
 		modelKey := "ANTHROPIC_DEFAULT_" + slot.Key + "_MODEL"
 		nameKey := "ANTHROPIC_DEFAULT_" + slot.Key + "_MODEL_NAME"
-		model := g.slotModel(slot.Key, i)
+		model := g.slotModel(t, slot.Key, i)
 		if model == "" {
 			env.delete(modelKey)
 			env.delete(nameKey)
@@ -276,25 +284,40 @@ func nameFor(models []Model, id string) string {
 }
 func firstModel(models []Model) string { return modelAt(models, 0) }
 
-// Write persists merged config for one tool, creating parent directories.
-// Before overwriting, an existing config is backed up beside it as
+// Write persists merged config for one tool, creating parent directories. For
+// Codex it also writes one `--profile` file per selected model, so a single
+// click leaves the user able to switch models without hand-editing anything.
+// Before overwriting, an existing file is backed up beside it as
 // "<filename>.<yyyyMMddHHmmss>" so a mistaken merge is recoverable.
 func (g *Generator) Write(t Tool) (string, error) {
-	fullPath := Resolve(t).Config
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+	if t.Config == "" {
+		t = Resolve(t)
+	}
+	if err := writeWithBackup(t.Config, g.Render(t)); err != nil {
 		return "", err
 	}
-	if data, err := os.ReadFile(fullPath); err == nil {
-		backupPath := fullPath + "." + time.Now().Format("20060102150405")
+	// 传 resolve 过的 tool：WriteProfiles 要用 t.Config 定位同目录，
+	// 未 resolve 时它是空的，profile 会一个都写不出来。
+	if _, err := g.WriteProfiles(t); err != nil {
+		return t.Config, err
+	}
+	return t.Config, nil
+}
+
+// writeWithBackup writes content after moving any existing file aside as
+// "<filename>.<yyyyMMddHHmmss>". A mistaken merge stays recoverable, which
+// matters most for the config files a user did not create with this app.
+func writeWithBackup(path, content string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if data, err := os.ReadFile(path); err == nil {
+		backupPath := path + "." + time.Now().Format("20060102150405")
 		if err := os.WriteFile(backupPath, data, 0o644); err != nil {
-			return "", err
+			return err
 		}
 	}
-	content := g.Render(t)
-	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
-		return "", err
-	}
-	return fullPath, nil
+	return os.WriteFile(path, []byte(content), 0o644)
 }
 
 func envFor(provider string) string {
