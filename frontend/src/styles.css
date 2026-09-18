@@ -76,6 +76,9 @@
   --env-well: #f2f2f3;
   --selected-bg: #202126;
   --selected-bg-hover: #32343b;
+  /* 实心选中块上的文字色。浅色主题下 --selected-bg 是深底，需要白字；
+     暗色主题反过来（见 html.dark），所以它对偶于 --selected-bg 而非固定值。 */
+  --selected-ink: #fff;
   --switch-off: #c8c9ce;
   --switch-on: #202126;
   --warn-ink: #a45a2a;
@@ -936,16 +939,10 @@ code {
   text-overflow: ellipsis;
   min-width: 0;
 }
-.route-card-head .row-edit {
-  margin-left: 0;
-  width: 26px;
-  height: 26px;
-}
-.route-card-head .route-client-model + .row-edit {
+/* 左侧模型名吃掉剩余宽度，两个图标按钮固定贴右，且彼此间距恒定。
+   尺寸不再覆盖，统一由 HeroUI ghost 决定。 */
+.route-card-head .route-client-model + .icon-action {
   margin-left: auto;
-}
-.route-card-head .row-edit + .row-edit {
-  margin-left: 0;
 }
 .route-card-body {
   display: flex;
@@ -1079,20 +1076,11 @@ code {
   color: var(--muted-3);
   font-size: 10px;
 }
-.row-edit {
-  width: 29px;
-  height: 29px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted-2);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-}
-.row-edit:hover {
-  background: var(--hover-fill);
-  color: var(--ink);
+/* 行内图标动作按钮只负责布局定位。尺寸、圆角、hover 与按压反馈一律交给
+   HeroUI ghost（与卡片头部未加类的删除按钮同源），此处不得再覆盖外观。 */
+.icon-action {
+  margin-left: 0;
+  flex: 0 0 auto;
 }
 .provider-row [data-slot="switch"] {
   justify-self: start;
@@ -1168,12 +1156,20 @@ code {
   align-items: center;
   gap: 1px;
 }
-.provider-card-actions .row-edit {
-  margin-left: 0;
+/* HeroUI 的 Tooltip.Trigger 是 display:block 的 div，内部行盒的基线对齐会把
+   按钮往下推约 2px；改成 flex 容器让按钮直接作为 flex item 参与居中，
+   与卡片里未包 Tooltip 的 icon 按钮保持同一水平线。 */
+.provider-card-actions .tooltip__trigger {
+  display: flex;
+  align-items: center;
 }
+/* 图标按钮高 32px、掩码文本单行仅 15px，若沿用 flex-start 再加负 margin
+   上提，按钮会溢出容器顶部（29px 时代的 -2px 补偿在 32px 下已失效）。
+   改为中心对齐：图标中心与文本视觉中心重合，多行掩码时按钮亦保持在文本
+   块中部，不再需要任何负 margin 修补。 */
 .key-display {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 4px;
   margin: 10px 0 8px;
   min-width: 0;
@@ -1190,10 +1186,6 @@ code {
   white-space: pre-wrap;
   -webkit-user-select: text;
   user-select: text;
-}
-.key-display .row-edit {
-  flex: 0 0 auto;
-  margin-top: -2px;
 }
 .key-env-row {
   display: flex;
@@ -1465,7 +1457,12 @@ code {
 .provider-form {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  /* Scroll the whole panel rather than clipping it: with overflow:hidden a
+     short window hid every field below the model list with no way to reach
+     them. The list keeps its own scrollbar for long catalogues, so a wheel
+     over it scrolls the list first and then chains to this container. */
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 23px 25px;
   display: flex;
   flex-direction: column;
@@ -1532,7 +1529,9 @@ code {
 .provider-model-selector {
   display: flex;
   flex: 1;
-  min-height: 0;
+  /* Content-driven: a flat min-height here would fight the list's own ceiling
+     below and pad short catalogues with empty space. */
+  min-height: auto;
   flex-direction: column;
   gap: 4px;
 }
@@ -1563,9 +1562,132 @@ code {
 .provider-model-error {
   color: var(--error-ink-strong);
 }
+
+/* API Key pool. Credentials are rows inside the provider drawer, so they follow
+   the same compact 11-12px scale as the model selector above them. The card is
+   a group box, so its padding plus border is absorbed by an equal negative
+   margin: with a plain inset the add-key inputs measured 22px narrower than
+   every drawer field above them and the block read as a misaligned form. */
+.provider-credentials {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 -11px;
+  padding: 10px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+}
+.provider-credentials-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.provider-credentials-header > div {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+.provider-credentials-header b {
+  font-size: 12px;
+}
+.provider-credentials-header p {
+  margin: 0;
+  color: var(--muted-4);
+  font-size: 11px;
+  line-height: 1.45;
+}
+/* Wide enough for the longest mode label ("会话粘性") plus the chevron, so the
+   field reads as a real control instead of a 76px stub sized by "轮询". It does
+   not shrink: the hint beside it wraps instead, which keeps the control stable
+   at every window width. The trigger fills it via FieldSelect's fullWidth. */
+.provider-credentials-header .provider-credential-mode {
+  flex: 0 0 124px;
+}
+.provider-credential-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.provider-credential-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.06));
+}
+.provider-credential-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+}
+.provider-credential-title {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.provider-credential-title b {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provider-credential-title em {
+  flex: none;
+  color: var(--muted-4);
+  font-size: 10px;
+  font-style: normal;
+}
+.provider-credential-badge {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--error-ink-strong);
+  font-size: 10px;
+}
+.provider-credential-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+.provider-credential-add {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+.provider-credential-name {
+  flex: 0 1 34%;
+}
+.provider-credential-secret {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .provider-model-scroll {
-  flex: 1 1 0;
+  /* Ceiling, not a floor: the section above sizes itself from this list's
+     content, so a floor would pad short catalogues with dead space. With
+     min-height:0 alone the list was merely whatever the form had left over
+     (~107px at the default 900px window), so give it real room here. 32vh
+     tracks the window; the bounds keep it sane on tiny and huge ones. */
+  flex: 1 1 auto;
   min-height: 0;
+  max-height: clamp(200px, 32vh, 560px);
   overflow-y: auto;
   padding: 0 2px;
 }
@@ -1720,6 +1842,25 @@ code {
 .request-log-filters .select__clear-button:not([data-empty="true"]) {
   margin-inline-end: 24px !important;
 }
+/* HeroUI 上游把 .list-box-item 的选中态留成了空规则（源码里
+   `&[aria-selected="true"], &[data-selected="true"] { }` 没有任何声明），
+   所以下拉里的当前项和普通项的背景都是透明，完全看不出选中的是哪个。
+   这里补上项目自己的"选中"语义：实心块 + 反色文字，与侧栏导航选中项、
+   主按钮共用 --selected-bg / --selected-ink 那一对 token（暗色下自动翻转）。
+   !important 是对 HeroUI 覆盖的既定惯例；同时也压过它同特异性的 hover 浅灰。 */
+.list-box-item[aria-selected="true"],
+.list-box-item[data-selected="true"] {
+  background: var(--selected-bg) !important;
+  color: var(--selected-ink) !important;
+}
+@media (hover: hover) {
+  .list-box-item[aria-selected="true"]:hover,
+  .list-box-item[aria-selected="true"][data-hovered="true"],
+  .list-box-item[data-selected="true"]:hover,
+  .list-box-item[data-selected="true"][data-hovered="true"] {
+    background: var(--selected-bg-hover) !important;
+  }
+}
 .request-log-select-popover {
   max-height: 216px;
   overflow-y: auto;
@@ -1733,6 +1874,9 @@ code {
   padding: 3px 7px;
   font-size: 11px;
   line-height: 18px;
+  /* 上面把行高压到 26px，HeroUI 默认的 rounded-2xl(16px) 在这个高度上会
+     两端收成半圆。选中块是新加的实心底，形状必须自己收一档。 */
+  border-radius: 8px;
 }
 .model-option {
   display: flex;
@@ -1756,6 +1900,13 @@ code {
   white-space: nowrap;
   font-size: 11px;
   color: var(--muted);
+}
+/* 选中块是实心底，--muted 的中性灰压在上面只有约 3:1，11px 的提供商名会
+   失读。改成继承块的前景色再降不透明度，浅色深底与暗色浅底都自动成立。 */
+.list-box-item[aria-selected="true"] .model-option-provider,
+.list-box-item[data-selected="true"] .model-option-provider {
+  color: inherit;
+  opacity: 0.72;
 }
 /* 日志页与演练场沿用 .content 的固定高度列布局，无需额外规则；这里只保留
    panels 的撑满设置。 */
@@ -2157,6 +2308,48 @@ code {
 .model-select-list [data-slot="checkbox"] {
   min-width: 0;
 }
+.profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+  flex: 0 0 auto;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.profile-list-head {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.profile-list-head code {
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--well-bg);
+}
+.profile-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.profile-name {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.profile-model {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .agent-mini-actions {
   display: flex;
   gap: 7px;
@@ -2311,6 +2504,7 @@ html.dark {
 
   --selected-bg: #e7e8ec;
   --selected-bg-hover: #c9cad1;
+  --selected-ink: #14151a;
   --switch-off: #4a4b54;
   --switch-on: #9aa0ff;
 
@@ -3276,4 +3470,28 @@ html.dark .skills-add {
 }
 .skills-editor-actions > [data-slot="button"] {
   margin-top: 0 !important;
+}
+
+/* 上游 Key 掩码：日志与用量面板里用来辨认具体是哪个 Key。
+   掩码本身不敏感（只有首 2 尾 3），等宽字体让不同 Key 更容易横向对比。 */
+.request-log-credential {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.usage-stat-alias {
+  color: var(--muted-2);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+  flex: 1;
+  text-align: right;
+}
+.provider-credential-title code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted-2);
+  margin-left: 8px;
 }

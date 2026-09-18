@@ -52,6 +52,7 @@ import {
   getRequestLog,
   getUsageBreakdown,
   listRequestLogs,
+  addProviderCredential,
   listToolTemplates,
   localAPIKeyEnvStatus,
   renderToolTemplate,
@@ -124,13 +125,14 @@ const LOG_COLUMNS = [
   "客户端",
   "模型",
   "提供商",
+  "上游 Key",
   "输入",
   "输出",
   "Tokens",
   "耗时",
   "时间",
 ];
-const LOG_COLUMN_WIDTHS = [72, 76, 150, 136, 90, 200, 200, 140, 72, 168];
+const LOG_COLUMN_WIDTHS = [72, 76, 150, 136, 90, 150, 200, 200, 140, 72, 168];
 const pageMeta: Record<Page, { title: string; description: string }> = {
   overview: {
     title: "控制台概览",
@@ -387,9 +389,18 @@ export default function App() {
         .map((value) => value.trim())
         .filter(Boolean),
       availableModels: form.availableModels,
+      credentialMode: editingProvider?.credentialMode ?? "session",
       updatedAt: editingProvider?.updatedAt ?? "",
     });
-    if (form.apiKey) await setProviderAPIKey(saved.id, form.apiKey);
+    // A new provider's key becomes its first pooled credential; for an existing
+    // provider the drawer's field appends, so a typo cannot overwrite a working key.
+    if (form.apiKey) {
+      if (editingProvider) {
+        await addProviderCredential(saved.id, "", form.apiKey);
+      } else {
+        await setProviderAPIKey(saved.id, form.apiKey);
+      }
+    }
     setData({
       ...data,
       providers: [
@@ -979,6 +990,31 @@ function RequestLogs({
                         "—"
                       )}
                     </td>
+                    <td className="request-log-compact-cell">
+                      {log.credentialMask || log.credentialName ? (
+                        <Tooltip>
+                          <Tooltip.Trigger>
+                            <span
+                              className="request-log-credential"
+                              title={
+                                log.credentialName
+                                  ? `${log.credentialName} · ${log.credentialMask}`
+                                  : log.credentialMask
+                              }
+                            >
+                              {log.credentialMask || log.credentialName}
+                            </span>
+                          </Tooltip.Trigger>
+                          <Tooltip.Content>
+                            {log.credentialName
+                              ? `${log.credentialName} · ${log.credentialMask}`
+                              : log.credentialMask}
+                          </Tooltip.Content>
+                        </Tooltip>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td className="request-log-input-cell">
                       <div className="request-log-input">
                         <Button
@@ -1064,7 +1100,10 @@ function RequestLogs({
                 ))}
                 {logs.items.length === 0 && (
                   <tr>
-                    <td className="request-log-empty" colSpan={10}>
+                    <td
+                      className="request-log-empty"
+                      colSpan={LOG_COLUMNS.length}
+                    >
                       暂无请求日志。通过本地代理发起调用后会显示在这里。
                     </td>
                   </tr>
@@ -1297,6 +1336,24 @@ function UsagePanel() {
         <Card.Content>
           <div className="panel-title">
             <div>
+              <h2>上游 Key 用量</h2>
+              <p>各上游 API Key 的请求与 Token 分布（按掩码显示）</p>
+            </div>
+          </div>
+          {breakdown.credentials.length === 0 ? (
+            <p className="provider-model-empty">暂无用量数据</p>
+          ) : (
+            <UsageStatList
+              stats={breakdown.credentials}
+              totalTokens={totalTokens}
+            />
+          )}
+        </Card.Content>
+      </Card>
+      <Card className="panel">
+        <Card.Content>
+          <div className="panel-title">
+            <div>
               <h2>密钥用量</h2>
               <p>各本地 API 密钥的请求与 Token 分布</p>
             </div>
@@ -1330,8 +1387,11 @@ function UsageStatList({
           <div className="usage-stat" key={s.key}>
             <div className="usage-stat-top">
               <b className="usage-stat-name" title={s.key}>
-                {s.name || s.key}
+                {s.mask || s.name || s.key}
               </b>
+              {s.mask && s.name && (
+                <span className="usage-stat-alias">{s.name}</span>
+              )}
               <span className="usage-stat-tokens">
                 <TokenValue value={tokens} as="span" />
                 <span className="usage-stat-token-suffix">Tokens</span>
@@ -1643,16 +1703,20 @@ function Providers({
                 </span>
               </div>
               <div className="provider-card-actions">
-                <Button
-                  isIconOnly
-                  size="sm"
-                  variant="ghost"
-                  className="row-edit"
-                  onPress={() => onEdit(p)}
-                  aria-label={`编辑 ${p.name}`}
-                >
-                  <Pencil size={15} />
-                </Button>
+                <Tooltip>
+                  <Tooltip.Trigger>
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      variant="ghost"
+                      onPress={() => onEdit(p)}
+                      aria-label={`编辑 ${p.name}`}
+                    >
+                      <Pencil size={15} />
+                    </Button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content>编辑提供商</Tooltip.Content>
+                </Tooltip>
                 <Tooltip>
                   <Tooltip.Trigger>
                     <Button
@@ -1798,7 +1862,7 @@ function Mappings({
                       isIconOnly
                       size="sm"
                       variant="ghost"
-                      className="row-edit"
+                      className="icon-action"
                       onPress={() => copy(mapping.id, mapping.clientModel)}
                       aria-label={`复制 ${mapping.clientModel}`}
                     >
@@ -1808,7 +1872,7 @@ function Mappings({
                       isIconOnly
                       size="sm"
                       variant="ghost"
-                      className="row-edit"
+                      className="icon-action"
                       onPress={() => onEdit(mapping)}
                       aria-label={`编辑 ${mapping.clientModel}`}
                     >
@@ -1995,7 +2059,7 @@ function LocalKeys({
                       isIconOnly
                       size="sm"
                       variant="ghost"
-                      className="row-edit"
+                      className="icon-action"
                       isDisabled={envBusy[k.id]}
                       onPress={() => void exportEnv(k)}
                       aria-label={`导出 ${k.name} 为环境变量`}
@@ -2013,7 +2077,7 @@ function LocalKeys({
                   isIconOnly
                   size="sm"
                   variant="ghost"
-                  className="row-edit"
+                  className="icon-action"
                   onPress={() => copy(k.key)}
                   aria-label={`复制 ${k.name}`}
                 >
@@ -2041,7 +2105,7 @@ function LocalKeys({
                 isIconOnly
                 size="sm"
                 variant="ghost"
-                className="row-edit"
+                className="icon-action"
                 onPress={() =>
                   setRevealed((current) => ({
                     ...current,
@@ -2146,9 +2210,14 @@ function AgentTemplates() {
       Object.entries(merged).filter(([, v]) => v !== ""),
     );
   };
-  // Default for multi-provider tools: every routable model enabled.
+  // Default checked set comes from the backend: ai-sdk/pi list candidates so they
+  // default to every routable model, while Codex's checklist chooses which
+  // --profile files to generate and defaults to what is already on disk. Falling
+  // back to "all" here would write dozens of files on first open.
   const selectedModels = (tool: ToolPreview): string[] =>
-    modelOverrides[tool.id] ?? tool.routable.map((m) => m.id);
+    modelOverrides[tool.id] ??
+    tool.selectedModels ??
+    tool.routable.map((m) => m.id);
   const applyRender = async (
     toolId: string,
     slotModels: Record<string, string>,
@@ -2165,6 +2234,8 @@ function AgentTemplates() {
                   content: p.content,
                   current: p.current,
                   exists: p.exists,
+                  // profile 列表随勾选变化；漏掉它会让勾选后列表停在旧内容。
+                  profiles: p.profiles ?? [],
                 }
               : t,
           ) ?? prev,
@@ -2201,18 +2272,36 @@ function AgentTemplates() {
     setWritten(null);
     try {
       const tool = previews.find((t) => t.id === id);
+      const slots = tool ? effectiveSlots(tool) : {};
       await writeToolTemplate(
         id,
-        tool ? effectiveSlots(tool) : {},
+        slots,
         tool ? selectedModels(tool) : undefined,
       );
       setWritten(tool?.configPath ?? id);
       setPreviews(
         (prev) =>
           prev?.map((t) =>
-            t.id === id ? { ...t, current: t.content, exists: true } : t,
+            t.id === id
+              ? {
+                  ...t,
+                  current: t.content,
+                  exists: true,
+                  // The write just made these the on-disk assignment, so it
+                  // becomes the new baseline: reopening the panel re-derives
+                  // from it instead of the catalog fallback.
+                  slotModels: slots,
+                }
+              : t,
           ) ?? prev,
       );
+      // Drop the session overrides now that the baseline carries the choice.
+      setOverrides((o) => {
+        if (!(id in o)) return o;
+        const next = { ...o };
+        delete next[id];
+        return next;
+      });
     } finally {
       setWritingId(null);
     }
@@ -2378,6 +2467,23 @@ function AgentTemplates() {
                           })}
                         </div>
                       )}
+                      {configuring &&
+                        (configuring.profiles?.length ?? 0) > 0 && (
+                          <div className="profile-list">
+                            <div className="profile-list-head">
+                              同时生成 {configuring.profiles.length} 份
+                              profile，用 <code>codex --profile</code> 切换模型
+                            </div>
+                            {configuring.profiles.map((p) => (
+                              <div className="profile-row" key={p.name}>
+                                <code className="profile-name">
+                                  codex --profile {p.name}
+                                </code>
+                                <span className="profile-model">{p.model}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                     </div>
                   </Tabs.Panel>
                   <Tabs.Panel id="diff">

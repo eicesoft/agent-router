@@ -13,6 +13,7 @@ import { fetchProviderIcon, fetchProviderModels } from "../lib/api";
 import type { AvailableModel, Provider } from "../lib/types";
 import catalog from "../../../backend/provider/catalog.json";
 import { FieldSelect } from "./FieldSelect";
+import { ProviderCredentials } from "./ProviderCredentials";
 
 export type ProviderFormState = {
   icon: string;
@@ -403,12 +404,18 @@ export function ProviderDrawer({
             onChange={(value) => change("apiKey", value)}
             aria-label="API Key"
           >
-            <Label>API Key</Label>
+            <Label>{provider ? "新增 API Key" : "API Key"}</Label>
             <Input
               type="password"
-              placeholder={provider ? "留空则保持现有 Key" : "sk-..."}
+              placeholder={provider ? "填写后追加到 Key 池" : "sk-..."}
             />
+            {provider && (
+              <p className="provider-form-note">
+                已有 Key 不会被覆盖；留空则不变
+              </p>
+            )}
           </TextField>
+          {provider && <ProviderCredentials providerId={provider.id} />}
           <TextField
             value={form.modelPrefix}
             onChange={(value) => change("modelPrefix", value)}

@@ -7,6 +7,7 @@ import type {
   PlaygroundMessage,
   PlaygroundResult,
   Provider,
+  ProviderCredential,
   RequestLog,
   RequestLogFilter,
   RequestLogPage,
@@ -36,6 +37,7 @@ const demo: Bootstrap = {
         { id: "gpt-4.1", created: 0 },
         { id: "gpt-4o-mini", created: 0 },
       ],
+      credentialMode: "session",
       updatedAt: "",
     },
     {
@@ -49,6 +51,7 @@ const demo: Bootstrap = {
       enabled: false,
       models: ["claude-sonnet-4-5"],
       availableModels: [{ id: "claude-sonnet-4-5", created: 0 }],
+      credentialMode: "session",
       updatedAt: "",
     },
   ],
@@ -111,7 +114,7 @@ export async function saveSettings(
 }
 export async function getUsageBreakdown(): Promise<UsageBreakdown> {
   const app = (window as any).go?.main?.App;
-  if (!app) return { providers: [], models: [], keys: [] };
+  if (!app) return { providers: [], models: [], keys: [], credentials: [] };
   return app.GetUsageBreakdown();
 }
 export async function listToolTemplates(): Promise<ToolPreview[]> {
@@ -158,6 +161,60 @@ export async function setProviderAPIKey(
 ): Promise<void> {
   const app = (window as any).go?.main?.App;
   if (app && apiKey) await app.SetProviderAPIKey(providerId, apiKey);
+}
+
+export async function listProviderCredentials(
+  providerId: string,
+): Promise<ProviderCredential[]> {
+  const app = (window as any).go?.main?.App;
+  if (!app) return [];
+  return app.ListProviderCredentials(providerId);
+}
+
+export async function addProviderCredential(
+  providerId: string,
+  name: string,
+  apiKey: string,
+): Promise<ProviderCredential> {
+  const app = (window as any).go?.main?.App;
+  if (!app) throw new Error("浏览器预览模式不支持写入凭据");
+  return app.AddProviderCredential(providerId, name, apiKey);
+}
+
+export async function updateProviderCredential(
+  id: string,
+  name: string,
+  weight: number,
+): Promise<ProviderCredential> {
+  const app = (window as any).go?.main?.App;
+  if (!app) throw new Error("浏览器预览模式不支持写入凭据");
+  return app.UpdateProviderCredential(id, name, weight);
+}
+
+export async function deleteProviderCredential(id: string): Promise<void> {
+  const app = (window as any).go?.main?.App;
+  if (app) await app.DeleteProviderCredential(id);
+}
+
+export async function toggleProviderCredential(
+  id: string,
+  enabled: boolean,
+): Promise<void> {
+  const app = (window as any).go?.main?.App;
+  if (app) await app.ToggleProviderCredential(id, enabled);
+}
+
+export async function resetProviderCredentialStatus(id: string): Promise<void> {
+  const app = (window as any).go?.main?.App;
+  if (app) await app.ResetProviderCredentialStatus(id);
+}
+
+export async function setProviderCredentialMode(
+  providerId: string,
+  mode: string,
+): Promise<void> {
+  const app = (window as any).go?.main?.App;
+  if (app) await app.SetProviderCredentialMode(providerId, mode);
 }
 
 export async function saveModelMapping(
