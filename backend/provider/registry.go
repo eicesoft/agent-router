@@ -31,7 +31,11 @@ type Provider struct {
 	Enabled         bool             `json:"enabled"`
 	Models          []string         `json:"models"`
 	AvailableModels []AvailableModel `json:"availableModels"`
-	UpdatedAt       string           `json:"updatedAt"`
+	// CredentialMode selects how the credential pool picks among this provider's
+	// keys: session stickiness, round robin, least used, or random. Empty is
+	// normalized to session by the pool.
+	CredentialMode string `json:"credentialMode"`
+	UpdatedAt      string `json:"updatedAt"`
 }
 
 // AvailableModel retains the upstream identifier and its creation timestamp so
@@ -117,7 +121,7 @@ func (r *Registry) load() error {
 	if err := deletedRows.Err(); err != nil {
 		return err
 	}
-	rows, err := r.db.Query(`SELECT id,name,kind,base_url,api_key_ref,icon,model_prefix,enabled,models_json,available_models_json,updated_at FROM providers`)
+	rows, err := r.db.Query(`SELECT id,name,kind,base_url,api_key_ref,icon,model_prefix,enabled,models_json,available_models_json,credential_mode,updated_at FROM providers`)
 	if err != nil {
 		return err
 	}
@@ -126,7 +130,7 @@ func (r *Registry) load() error {
 		var p Provider
 		var enabled int
 		var models, availableModels string
-		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKeyRef, &p.Icon, &p.ModelPrefix, &enabled, &models, &availableModels, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKeyRef, &p.Icon, &p.ModelPrefix, &enabled, &models, &availableModels, &p.CredentialMode, &p.UpdatedAt); err != nil {
 			return err
 		}
 		p.Enabled = enabled == 1
@@ -196,6 +200,18 @@ func (r *Registry) Save(p Provider) (Provider, error) {
 	if p.Icon == "" {
 		p.Icon = string(p.Kind)
 	}
+	// A caller that does not carry the field (older UI payloads, automatic
+	// catalog seeding) must not silently reset an operator's chosen strategy.
+	// The mirror is read under the lock: Save itself locks later, and reading
+	// r.items unlocked here would race with concurrent saves.
+	if p.CredentialMode == "" {
+		r.mu.RLock()
+		existing, ok := r.items[p.ID]
+		r.mu.RUnlock()
+		if ok {
+			p.CredentialMode = existing.CredentialMode
+		}
+	}
 	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	models, _ := json.Marshal(p.Models)
 	availableModels, _ := json.Marshal(p.AvailableModels)
@@ -206,7 +222,7 @@ func (r *Registry) Save(p Provider) (Provider, error) {
 		return Provider{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT INTO providers(id,name,kind,base_url,api_key_ref,icon,model_prefix,enabled,models_json,available_models_json,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,base_url=excluded.base_url,api_key_ref=excluded.api_key_ref,icon=excluded.icon,model_prefix=excluded.model_prefix,enabled=excluded.enabled,models_json=excluded.models_json,available_models_json=excluded.available_models_json,updated_at=excluded.updated_at`, p.ID, p.Name, p.Kind, p.BaseURL, p.APIKeyRef, p.Icon, p.ModelPrefix, p.Enabled, string(models), string(availableModels), p.UpdatedAt); err != nil {
+	if _, err := tx.Exec(`INSERT INTO providers(id,name,kind,base_url,api_key_ref,icon,model_prefix,enabled,models_json,available_models_json,credential_mode,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,base_url=excluded.base_url,api_key_ref=excluded.api_key_ref,icon=excluded.icon,model_prefix=excluded.model_prefix,enabled=excluded.enabled,models_json=excluded.models_json,available_models_json=excluded.available_models_json,credential_mode=excluded.credential_mode,updated_at=excluded.updated_at`, p.ID, p.Name, p.Kind, p.BaseURL, p.APIKeyRef, p.Icon, p.ModelPrefix, p.Enabled, string(models), string(availableModels), p.CredentialMode, p.UpdatedAt); err != nil {
 		return Provider{}, err
 	}
 	if _, err := tx.Exec(`DELETE FROM deleted_providers WHERE id = ?`, p.ID); err != nil {
@@ -253,6 +269,19 @@ func (r *Registry) SetEnabled(id string, enabled bool) error {
 		return errors.New("provider not found")
 	}
 	p.Enabled = enabled
+	_, err := r.Save(p)
+	return err
+}
+
+// SetCredentialMode records how the credential pool should pick among this
+// provider's keys. It is a separate call from Save so a credential-mode change
+// never rewrites the rest of the provider row.
+func (r *Registry) SetCredentialMode(id, mode string) error {
+	p, ok := r.Get(id)
+	if !ok {
+		return errors.New("provider not found")
+	}
+	p.CredentialMode = strings.TrimSpace(mode)
 	_, err := r.Save(p)
 	return err
 }

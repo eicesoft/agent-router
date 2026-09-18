@@ -2,7 +2,9 @@ package proxy
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"agent-router/backend/config"
+	"agent-router/backend/credential"
 	"agent-router/backend/provider"
 	"agent-router/backend/storage"
 	"agent-router/backend/usage"
@@ -22,6 +25,37 @@ type fakeSecrets map[string]string
 func (f fakeSecrets) Set(string, string) error       { return nil }
 func (f fakeSecrets) Get(key string) (string, error) { return f[key], nil }
 func (f fakeSecrets) Delete(string) error            { return nil }
+
+// fakeStore is a secret.Store the credential pool can actually provision, which
+// the read-only fakeSecrets above cannot (its Set is a no-op). Tests keep using
+// fakeSecrets for the legacy single-key fixture and this for pooled keys.
+type fakeStore map[string]string
+
+func (s fakeStore) Set(account, value string) error { s[account] = value; return nil }
+func (s fakeStore) Get(account string) (string, error) {
+	value, ok := s[account]
+	if !ok {
+		return "", errors.New("secret not found")
+	}
+	return value, nil
+}
+func (s fakeStore) Delete(account string) error { delete(s, account); return nil }
+
+// newTestServer wires the gateway over a real credential pool. The pre-pool
+// fakeSecrets map describes legacy credentials: each entry is stored under its
+// own reference and adopted by the pool on first use, which is exactly the
+// upgrade path a single-key install takes.
+func newTestServer(db *sql.DB, registry *provider.Registry, mappings *config.MappingStore, secrets fakeSecrets, tracker *usage.SQLiteTracker, keys KeyVerifier) *Server {
+	store := fakeStore{}
+	for account, value := range secrets {
+		store[account] = value
+	}
+	pool, err := credential.NewPool(db, store)
+	if err != nil {
+		panic(err)
+	}
+	return New(registry, mappings, pool, tracker, keys)
+}
 
 type fakeKeys struct{ valid string }
 
@@ -74,7 +108,7 @@ func TestChatCompletionsMapsAndForwardsCompatibleRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"client-model","messages":[{"role":"developer","content":"you are helpful"},{"role":"user","content":"hello"}]}`))
 	req.Header.Set("Authorization", "Bearer ar-local")
 	req.Header.Set("User-Agent", "pi/0.85.1")
@@ -146,7 +180,7 @@ func TestListModelsReturnsOnlyRoutableMappings(t *testing.T) {
 		}
 	}
 
-	s := New(registry, mappings, fakeSecrets{}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 	request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	request.Header.Set("Authorization", "Bearer ar-local")
 	response := httptest.NewRecorder()
@@ -205,7 +239,7 @@ func TestLocalKeyIsRequired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 	unauthorized := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	response := httptest.NewRecorder()
 	s.listModels(response, unauthorized)
@@ -264,7 +298,7 @@ func TestAnthropicConversionEscapesTextAndReshapesTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 	payload := `{"model":"client-model","system":"line1\nline2 \"quoted\"","messages":[{"role":"user","content":"back\\slash"}],"max_tokens":16,
 		"tools":[{"name":"Agent","description":"launch one","input_schema":{"properties":{"prompt":{"type":"string"}}}}],"tool_choice":{"type":"tool","name":"Agent"}}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload))
@@ -355,7 +389,7 @@ func TestChatCompletionsForwardsToolParameters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 	payload := `{"model":"client-model","messages":[
 		{"role":"user","content":"hi"},
 		{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"ls\"}"}}]},
@@ -432,7 +466,7 @@ func TestAnthropicToolHistoryBecomesOpenAIToolMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 	// Two tool_result blocks in one user turn: OpenAI allows only one per message.
 	payload := `{"model":"client-model","max_tokens":16,"messages":[
 		{"role":"assistant","content":[{"type":"text","text":"checking"},{"type":"tool_use","id":"call_1","name":"bash","input":{"command":"ls"}},{"type":"tool_use","id":"call_2","name":"read","input":{}}]},
@@ -665,7 +699,7 @@ func TestChatCompletionsForwardsThinkingParameters(t *testing.T) {
 	if _, err := mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 	payload := `{"model":"client-model","messages":[{"role":"user","content":"hi"}],
 		"reasoning_effort":"high","thinking":{"type":"enabled","budget_tokens":2048},
 		"chat_template_kwargs":{"enable_thinking":true},"enable_thinking":true,"verbosity":"low"}`
@@ -737,7 +771,7 @@ func TestMessagesHandlerForwardsAndMapsThinking(t *testing.T) {
 		if _, err := mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true}); err != nil {
 			t.Fatal(err)
 		}
-		s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+		s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 		return s, func() { db.Close() }
 	}
 
@@ -859,7 +893,7 @@ func TestTruncatedUpstreamStreamIsLoggedAsFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 	payload := `{"model":"client-model","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload))
 	req.Header.Set("x-api-key", "ar-local")
@@ -1071,7 +1105,7 @@ func TestStalledUpstreamStreamIsUnwedgedAndLogged(t *testing.T) {
 	if _, err := mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 	s.stallTimeout = 50 * time.Millisecond
 
 	payload := `{"model":"client-model","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
@@ -1139,7 +1173,7 @@ func TestSmallMaxTokensSkipsReasoningEffortAndGetsFloor(t *testing.T) {
 	if _, err := mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages",
 		strings.NewReader(`{"model":"client-model","max_tokens":2112,"thinking":{"type":"enabled","budget_tokens":4096},"messages":[{"role":"user","content":"hi"}]}`))
@@ -1207,7 +1241,7 @@ func TestAnthropicAdapterCarriesSamplingToolsAndThinking(t *testing.T) {
 	if _, err := mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 	payload := `{"model":"client-model","messages":[
 		{"role":"system","content":"be brief"},
 		{"role":"user","content":"hi"}],
@@ -1318,7 +1352,7 @@ func TestAnthropicPassthroughLogsTokenUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 	payload := `{"model":"client-model","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload))
 	req.Header.Set("x-api-key", "ar-local")
@@ -1386,7 +1420,7 @@ func TestStreamingAnthropicToOpenAIRequestsAndReportsTokenUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 	payload := `{"model":"client-model","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(payload))
 	req.Header.Set("x-api-key", "ar-local")
@@ -1499,7 +1533,7 @@ func TestStreamingAnthropicUpstreamBecomesOpenAIChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 	tracker := usage.NewSQLiteTracker(db)
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, tracker, fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, tracker, fakeKeys{valid: "ar-local"})
 	payload := `{"model":"client-model","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(payload))
 	req.Header.Set("Authorization", "Bearer ar-local")
@@ -1594,7 +1628,7 @@ func TestLargeRequestBodyIsForwardedAndOversizeIsExplained(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
 
 	// The old cap rejected this without ever calling the provider.
 	large := `{"model":"client-model","messages":[{"role":"user","content":"` + strings.Repeat("a", 5<<20) + `"}]}`

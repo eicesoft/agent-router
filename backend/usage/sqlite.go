@@ -24,6 +24,13 @@ type Event struct {
 	Success               bool
 	LatencyMS             int
 	ErrorMessage          string
+	// CredentialID/Name identify which upstream key served the request, so the
+	// UI can show per-key usage without the pool needing its own counters.
+	// CredentialMask is the only secret-derived value that may be persisted: the
+	// short display form (ss****sfg) shown in logs instead of the raw key.
+	CredentialID   string
+	CredentialName string
+	CredentialMask string
 }
 
 // RequestLog is a single proxied request. RequestBody and ResponseBody are the
@@ -48,12 +55,16 @@ type RequestLog struct {
 	Success               bool   `json:"success"`
 	LatencyMS             int    `json:"latencyMs"`
 	ErrorMessage          string `json:"errorMessage"`
+	CredentialID          string `json:"credentialId"`
+	CredentialName        string `json:"credentialName"`
+	CredentialMask        string `json:"credentialMask"`
 }
 
 type Breakdown struct {
-	Providers []UsageStat `json:"providers"`
-	Models    []UsageStat `json:"models"`
-	Keys      []UsageStat `json:"keys"`
+	Providers   []UsageStat `json:"providers"`
+	Models      []UsageStat `json:"models"`
+	Keys        []UsageStat `json:"keys"`
+	Credentials []UsageStat `json:"credentials"`
 }
 
 type RequestLogPage struct {
@@ -98,7 +109,7 @@ func (t *SQLiteTracker) Record(event Event) error {
 	if _, err := tx.Exec(`INSERT INTO usage_events(created_at,provider_id,model,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message) VALUES(?,?,?,?,?,?,?,?,?,?)`, createdAt, event.ProviderID, event.ClientModel, event.InputTokens, event.OutputTokens, event.CachedInputTokens, event.ReasoningOutputTokens, event.Success, event.LatencyMS, event.ErrorMessage); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO request_logs(created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,request_body,response_body,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, createdAt, event.TokenID, event.TokenName, event.ProviderID, event.ProviderName, event.ClientModel, event.UpstreamModel, event.UserAgent, event.RequestBody, event.ResponseBody, event.InputTokens, event.OutputTokens, event.CachedInputTokens, event.ReasoningOutputTokens, event.Success, event.LatencyMS, event.ErrorMessage); err != nil {
+	if _, err := tx.Exec(`INSERT INTO request_logs(created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,request_body,response_body,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message,credential_id,credential_name,credential_mask) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, createdAt, event.TokenID, event.TokenName, event.ProviderID, event.ProviderName, event.ClientModel, event.UpstreamModel, event.UserAgent, event.RequestBody, event.ResponseBody, event.InputTokens, event.OutputTokens, event.CachedInputTokens, event.ReasoningOutputTokens, event.Success, event.LatencyMS, event.ErrorMessage, event.CredentialID, event.CredentialName, event.CredentialMask); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -108,8 +119,8 @@ func (t *SQLiteTracker) Record(event Event) error {
 // detail view, which are truncated in listings to keep IPC messages small.
 func (t *SQLiteTracker) GetRequestLog(id int64) (RequestLog, error) {
 	var item RequestLog
-	err := t.db.QueryRow(`SELECT id,created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,request_body,response_body,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message FROM request_logs WHERE id = ?`, id).
-		Scan(&item.ID, &item.CreatedAt, &item.TokenID, &item.TokenName, &item.ProviderID, &item.ProviderName, &item.ClientModel, &item.UpstreamModel, &item.UserAgent, &item.RequestBody, &item.ResponseBody, &item.InputTokens, &item.OutputTokens, &item.CachedInputTokens, &item.ReasoningOutputTokens, &item.Success, &item.LatencyMS, &item.ErrorMessage)
+	err := t.db.QueryRow(`SELECT id,created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,request_body,response_body,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message,credential_id,credential_name,credential_mask FROM request_logs WHERE id = ?`, id).
+		Scan(&item.ID, &item.CreatedAt, &item.TokenID, &item.TokenName, &item.ProviderID, &item.ProviderName, &item.ClientModel, &item.UpstreamModel, &item.UserAgent, &item.RequestBody, &item.ResponseBody, &item.InputTokens, &item.OutputTokens, &item.CachedInputTokens, &item.ReasoningOutputTokens, &item.Success, &item.LatencyMS, &item.ErrorMessage, &item.CredentialID, &item.CredentialName, &item.CredentialMask)
 	if err != nil {
 		return RequestLog{}, err
 	}
@@ -137,14 +148,14 @@ func (t *SQLiteTracker) ListRequestLogs(page, pageSize int, filter RequestLogFil
 	// Bodies are truncated: two requests by full trial bodies can exceed the
 	// WebView IPC message size and truncate the callback JSON. The detail view
 	// fetches full bodies by id via GetRequestLog.
-	rows, err := t.db.Query(`SELECT id,created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,substr(request_body,1,`+previewLimit+`),substr(response_body,1,`+previewLimit+`),input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message FROM request_logs`+where+` ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?`, queryArgs...)
+	rows, err := t.db.Query(`SELECT id,created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,substr(request_body,1,`+previewLimit+`),substr(response_body,1,`+previewLimit+`),input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message,credential_id,credential_name,credential_mask FROM request_logs`+where+` ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return result, fmt.Errorf("query request logs: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var item RequestLog
-		if err := rows.Scan(&item.ID, &item.CreatedAt, &item.TokenID, &item.TokenName, &item.ProviderID, &item.ProviderName, &item.ClientModel, &item.UpstreamModel, &item.UserAgent, &item.RequestBody, &item.ResponseBody, &item.InputTokens, &item.OutputTokens, &item.CachedInputTokens, &item.ReasoningOutputTokens, &item.Success, &item.LatencyMS, &item.ErrorMessage); err != nil {
+		if err := rows.Scan(&item.ID, &item.CreatedAt, &item.TokenID, &item.TokenName, &item.ProviderID, &item.ProviderName, &item.ClientModel, &item.UpstreamModel, &item.UserAgent, &item.RequestBody, &item.ResponseBody, &item.InputTokens, &item.OutputTokens, &item.CachedInputTokens, &item.ReasoningOutputTokens, &item.Success, &item.LatencyMS, &item.ErrorMessage, &item.CredentialID, &item.CredentialName, &item.CredentialMask); err != nil {
 			return result, fmt.Errorf("scan request log: %w", err)
 		}
 		result.Items = append(result.Items, item)
@@ -207,8 +218,11 @@ func nextDay(date string) string {
 // Name is an optional display label overridden by the UI; providers and models
 // carry only Key, per-key stats carry both.
 type UsageStat struct {
-	Key                   string `json:"key"`
-	Name                  string `json:"name,omitempty"`
+	Key  string `json:"key"`
+	Name string `json:"name,omitempty"`
+	// Mask is the display form of an upstream key (ss****sfg), set only for the
+	// per-credential breakdown so a deleted credential stays identifiable.
+	Mask                  string `json:"mask,omitempty"`
 	Requests              int    `json:"requests"`
 	Successes             int    `json:"successes"`
 	InputTokens           int    `json:"inputTokens"`
@@ -246,6 +260,32 @@ func (t *SQLiteTracker) UsageByKey() []UsageStat {
 	}
 	return stats
 }
+
+// UsageByCredential aggregates per upstream key, using credential_id as the
+// durable group key so renaming a credential keeps its history together. Rows
+// recorded before a credential was identifiable group under their display name.
+// MAX(credential_mask) collapses the snapshot's duplicates to one representative
+// mask per group.
+func (t *SQLiteTracker) UsageByCredential() []UsageStat {
+	rows, err := t.db.Query(`SELECT COALESCE(NULLIF(credential_id,''),NULLIF(credential_name,'')),COALESCE(NULLIF(credential_name,''),'默认密钥'),COALESCE(MAX(NULLIF(credential_mask,'')),''),COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM request_logs WHERE COALESCE(credential_id,credential_name) <> '' GROUP BY COALESCE(NULLIF(credential_id,''),credential_name) ORDER BY COUNT(*) DESC, credential_name`)
+	if err != nil {
+		return []UsageStat{}
+	}
+	defer rows.Close()
+	stats := make([]UsageStat, 0, 8)
+	for rows.Next() {
+		var stat UsageStat
+		if err := rows.Scan(&stat.Key, &stat.Name, &stat.Mask, &stat.Requests, &stat.Successes, &stat.InputTokens, &stat.OutputTokens, &stat.CachedInputTokens, &stat.ReasoningOutputTokens); err != nil {
+			return []UsageStat{}
+		}
+		stats = append(stats, stat)
+	}
+	if err := rows.Err(); err != nil {
+		return []UsageStat{}
+	}
+	return stats
+}
+
 func (t *SQLiteTracker) usageByDimension(column string) []UsageStat {
 	rows, err := t.db.Query(`SELECT ` + column + `,COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM usage_events WHERE ` + column + `<>'' GROUP BY ` + column + ` ORDER BY COUNT(*) DESC, ` + column)
 	if err != nil {

@@ -16,19 +16,19 @@ import (
 	"time"
 
 	"agent-router/backend/config"
+	"agent-router/backend/credential"
 	"agent-router/backend/provider"
-	"agent-router/backend/secret"
 	"agent-router/backend/usage"
 )
 
 type Server struct {
-	registry *provider.Registry
-	mappings *config.MappingStore
-	secrets  secret.Store
-	keys     KeyVerifier
-	adapters AdapterSet
-	usage    *usage.SQLiteTracker
-	client   *http.Client
+	registry    *provider.Registry
+	mappings    *config.MappingStore
+	credentials *credential.Pool
+	keys        KeyVerifier
+	adapters    AdapterSet
+	usage       *usage.SQLiteTracker
+	client      *http.Client
 
 	// stallTimeout is how long a streaming upstream body may stay silent
 	// before the gateway gives up on it; see upstreamStallTimeout.
@@ -100,9 +100,12 @@ func (s *stallCloser) Close() error {
 	return s.body.Close()
 }
 
-func New(registry *provider.Registry, mappings *config.MappingStore, secrets secret.Store, usageTracker *usage.SQLiteTracker, keys KeyVerifier) *Server {
+// New wires the gateway. Upstream keys are reached only through the credential
+// pool, so this server never holds a single key itself; the pool is the one
+// owner of which key serves a request.
+func New(registry *provider.Registry, mappings *config.MappingStore, credentials *credential.Pool, usageTracker *usage.SQLiteTracker, keys KeyVerifier) *Server {
 	client := upstreamClient()
-	return &Server{registry: registry, mappings: mappings, secrets: secrets, keys: keys, adapters: NewAdapterSet(client), client: client, usage: usageTracker, stallTimeout: upstreamStallTimeout}
+	return &Server{registry: registry, mappings: mappings, credentials: credentials, keys: keys, adapters: NewAdapterSet(client), client: client, usage: usageTracker, stallTimeout: upstreamStallTimeout}
 }
 
 // stallGuarded wraps a streaming upstream body so silence is fatal instead of
@@ -129,6 +132,8 @@ func (s *Server) Start(address string) error {
 	mux.HandleFunc("GET /v1/models", s.listModels)
 	mux.HandleFunc("POST /v1/chat/completions", s.chatCompletions)
 	mux.HandleFunc("POST /v1/messages", s.messagesHandler)
+	// Codex CLI 只支持 Responses 线协议，网关在这里把它转成 Chat Completions 转发。
+	mux.HandleFunc("POST /v1/responses", s.responses)
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		return err
@@ -332,11 +337,10 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "provider_unavailable", "target provider is unavailable")
 		return
 	}
-	key, err := s.secrets.Get(p.APIKeyRef)
-	if err != nil {
-		writeError(w, 424, "provider_credentials_missing", "no API key configured for "+p.Name)
-		return
-	}
+	// The session identity is derived before a key is chosen: in session mode it
+	// decides which key serves this conversation, so it must be known up front.
+	session := sessionIdentity(r, firstMessageText(input.Messages, "system"), firstMessageText(input.Messages, "user"))
+	var served requestCredential
 	logEvent := func(success bool, responseBody, errorMessage string, tokens tokenUsage) {
 		_ = s.usage.Record(usage.Event{
 			TokenID: tokenID, TokenName: tokenName, ProviderID: p.ID, ProviderName: p.Name,
@@ -347,15 +351,20 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 			CachedInputTokens: tokens.CachedInput, ReasoningOutputTokens: tokens.ReasoningOutput,
 			Success:   success,
 			LatencyMS: int(time.Since(started).Milliseconds()), ErrorMessage: errorMessage,
+			CredentialID: served.id, CredentialName: served.name, CredentialMask: served.mask,
 		})
 	}
 	input.Model = mapping.UpstreamModel
-	response, err := s.adapters.For(p.Kind).Do(r.Context(), p, key, input)
+	response, lease, err := s.withCredential(r.Context(), p, session, func(key string) (*http.Response, error) {
+		return s.adapters.For(p.Kind).Do(r.Context(), p, key, input)
+	})
 	if err != nil {
-		writeError(w, 502, "upstream_error", err.Error())
-		logEvent(false, "", err.Error(), tokenUsage{})
+		status, kind, message := credentialError(err, p.Name)
+		writeError(w, status, kind, message)
+		logEvent(false, "", message, tokenUsage{})
 		return
 	}
+	served.set(lease)
 	defer response.Body.Close()
 	if response.StatusCode >= 300 {
 		body, _ := io.ReadAll(response.Body)
@@ -449,13 +458,12 @@ func (s *Server) messagesHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "provider_unavailable", "target provider is unavailable")
 		return
 	}
-	key, err := s.secrets.Get(p.APIKeyRef)
-	if err != nil {
-		writeError(w, 424, "provider_credentials_missing", "no API key configured for "+p.Name)
-		return
-	}
+	// Anthropic carries the system prompt as a top-level field, not a message,
+	// so the conversation head is built from it plus the first user turn.
+	session := sessionIdentity(r, extractAnthropicSystem(input.System), firstAnthropicMessageText(input.Messages, "user"))
 	requestBody, _ := json.Marshal(input)
 
+	var served requestCredential
 	logEvent := func(success bool, responseBody, errorMessage string, tokens tokenUsage) {
 		_ = s.usage.Record(usage.Event{
 			TokenID: tokenID, TokenName: tokenName, ProviderID: p.ID, ProviderName: p.Name,
@@ -466,22 +474,26 @@ func (s *Server) messagesHandler(w http.ResponseWriter, r *http.Request) {
 			CachedInputTokens: tokens.CachedInput, ReasoningOutputTokens: tokens.ReasoningOutput,
 			Success:   success,
 			LatencyMS: int(time.Since(started).Milliseconds()), ErrorMessage: errorMessage,
+			CredentialID: served.id, CredentialName: served.name, CredentialMask: served.mask,
 		})
 	}
 
 	// KindAnthropic upstream: passthrough (swap model name + auth, pipe body).
 	if p.Kind == provider.KindAnthropic {
-		s.anthropicPassthrough(w, r, p, key, mapping, input, logEvent)
+		s.anthropicPassthrough(w, r, p, session, mapping, input, logEvent, &served)
 		return
 	}
 
 	// Other kinds: convert Anthropic -> OpenAI -> route -> convert response back.
-	s.anthropicViaOpenAI(w, r, p, key, mapping, input, logEvent)
+	s.anthropicViaOpenAI(w, r, p, session, mapping, input, logEvent, &served)
 }
 
 // anthropicPassthrough forwards an Anthropic-format request to an Anthropic
-// upstream with just the model name and auth swapped. Streaming is piped through.
-func (s *Server) anthropicPassthrough(w http.ResponseWriter, r *http.Request, p provider.Provider, key string, mapping config.ModelMapping, input AnthropicRequest, logEvent func(bool, string, string, tokenUsage)) {
+// upstream with just the model name and auth swapped. Streaming is piped
+// through. It builds its own request rather than going through an adapter, so
+// the credential pool is reached via withCredential's closure, which is what
+// keeps this path under the same rotation and failover rules as the others.
+func (s *Server) anthropicPassthrough(w http.ResponseWriter, r *http.Request, p provider.Provider, session string, mapping config.ModelMapping, input AnthropicRequest, logEvent func(bool, string, string, tokenUsage), served *requestCredential) {
 	input.Model = mapping.UpstreamModel
 	body, err := json.Marshal(input)
 	if err != nil {
@@ -491,22 +503,25 @@ func (s *Server) anthropicPassthrough(w http.ResponseWriter, r *http.Request, p 
 	}
 
 	upstreamURL := strings.TrimRight(p.BaseURL, "/") + "/v1/messages"
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, upstreamURL, bytes.NewReader(body))
+	resp, lease, err := s.withCredential(r.Context(), p, session, func(key string) (*http.Response, error) {
+		// A fresh reader per attempt: the body is consumed by the first try, so
+		// a retry built on the same reader would send an empty request.
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, upstreamURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", key)
+		req.Header.Set("anthropic-version", "2023-06-01")
+		return s.client.Do(req)
+	})
 	if err != nil {
-		writeError(w, 502, "upstream_error", err.Error())
-		logEvent(false, "", err.Error(), tokenUsage{})
+		status, kind, message := credentialError(err, p.Name)
+		writeError(w, status, kind, message)
+		logEvent(false, "", message, tokenUsage{})
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", key)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		writeError(w, 502, "upstream_error", err.Error())
-		logEvent(false, "", err.Error(), tokenUsage{})
-		return
-	}
+	served.set(lease)
 	defer resp.Body.Close()
 
 	for _, h := range []string{"Content-Type", "Cache-Control"} {
@@ -570,7 +585,7 @@ func (s *Server) anthropicPassthrough(w http.ResponseWriter, r *http.Request, p 
 // anthropicViaOpenAI converts an Anthropic request to OpenAI format, routes
 // through the appropriate adapter, then converts the response back.
 // Streaming for non-Anthropic upstreams is not supported yet.
-func (s *Server) anthropicViaOpenAI(w http.ResponseWriter, r *http.Request, p provider.Provider, key string, mapping config.ModelMapping, input AnthropicRequest, logEvent func(bool, string, string, tokenUsage)) {
+func (s *Server) anthropicViaOpenAI(w http.ResponseWriter, r *http.Request, p provider.Provider, session string, mapping config.ModelMapping, input AnthropicRequest, logEvent func(bool, string, string, tokenUsage), served *requestCredential) {
 	system := extractAnthropicSystem(input.System)
 	openAIMsgs := make([]Message, 0, len(input.Messages)+1)
 	if system != "" {
@@ -616,12 +631,16 @@ func (s *Server) anthropicViaOpenAI(w http.ResponseWriter, r *http.Request, p pr
 		openAIReq.StreamOptions = map[string]bool{"include_usage": true}
 	}
 
-	response, err := s.adapters.For(p.Kind).Do(r.Context(), p, key, openAIReq)
+	response, lease, err := s.withCredential(r.Context(), p, session, func(key string) (*http.Response, error) {
+		return s.adapters.For(p.Kind).Do(r.Context(), p, key, openAIReq)
+	})
 	if err != nil {
-		writeError(w, 502, "upstream_error", err.Error())
-		logEvent(false, "", err.Error(), tokenUsage{})
+		status, kind, message := credentialError(err, p.Name)
+		writeError(w, status, kind, message)
+		logEvent(false, "", message, tokenUsage{})
 		return
 	}
+	served.set(lease)
 	defer response.Body.Close()
 
 	if response.StatusCode >= 300 {

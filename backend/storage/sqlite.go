@@ -69,7 +69,16 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_filter ON request_logs(token_id, pro
 CREATE TABLE IF NOT EXISTS local_api_keys (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, api_key TEXT NOT NULL UNIQUE,
   enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-);`); err != nil {
+);
+-- 上游凭据池：每行只保存 Keychain 引用（secret_ref），token 本体仍然绝不落库。
+-- 一个 provider 可以有多行，由 backend/credential 决定谁服务当前请求。
+CREATE TABLE IF NOT EXISTS provider_credentials (
+  id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
+  secret_ref TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1,
+  weight INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'active',
+  last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_provider_credentials_provider ON provider_credentials(provider_id, created_at);`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate sqlite: %w", err)
 	}
@@ -119,6 +128,16 @@ CREATE TABLE IF NOT EXISTS local_api_keys (
 		{"request_logs", "reasoning_output_tokens", "INTEGER NOT NULL DEFAULT 0"},
 		{"usage_events", "cached_input_tokens", "INTEGER NOT NULL DEFAULT 0"},
 		{"usage_events", "reasoning_output_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		// 凭据池：providers.credential_mode 记录该 provider 的选择策略；
+		// request_logs 记录实际服务的凭据，供 UI 按 key 聚合用量。
+		{"providers", "credential_mode", "TEXT NOT NULL DEFAULT 'session'"},
+		{"request_logs", "credential_id", "TEXT NOT NULL DEFAULT ''"},
+		{"request_logs", "credential_name", "TEXT NOT NULL DEFAULT ''"},
+		// 掩码是唯一落库的上游密钥派生值（如 sk****xyz），供 UI 与日志显示。
+		// 它在明文已经在手的位置派生，不额外读 Keychain；见 credential.MaskSecret。
+		// request_logs 快照一份，使凭据被删除后历史日志仍可读。
+		{"provider_credentials", "mask", "TEXT NOT NULL DEFAULT ''"},
+		{"request_logs", "credential_mask", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		var exists int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, column.table, column.name).Scan(&exists); err != nil {
@@ -128,7 +147,7 @@ CREATE TABLE IF NOT EXISTS local_api_keys (
 		if exists == 0 {
 			if _, err := db.Exec(`ALTER TABLE ` + column.table + ` ADD COLUMN ` + column.name + ` ` + column.ddl); err != nil {
 				db.Close()
-				return nil, fmt.Errorf("migrate request log %s: %w", column.name, err)
+				return nil, fmt.Errorf("migrate %s.%s: %w", column.table, column.name, err)
 			}
 		}
 	}

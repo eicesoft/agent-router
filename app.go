@@ -12,6 +12,7 @@ import (
 	"agent-router/backend/agent"
 	"agent-router/backend/apikey"
 	"agent-router/backend/config"
+	"agent-router/backend/credential"
 	"agent-router/backend/envcfg"
 	"agent-router/backend/provider"
 	"agent-router/backend/proxy"
@@ -36,6 +37,9 @@ type App struct {
 	keys      *apikey.Store
 	proxy     *proxy.Server
 	settings  *settings.Store
+	// credentials is the pool of upstream keys. The proxy reaches keys only
+	// through it, so it is the single owner of which key serves a request.
+	credentials *credential.Pool
 
 	// gatewayAddr is the listen address the proxy was last started with;
 	// SaveSettings updates it when the host/port changes. Address changes
@@ -75,6 +79,10 @@ func NewApp() *App {
 	if err != nil {
 		panic(fmt.Errorf("read settings: %w", err))
 	}
+	credentials, err := credential.NewPool(db, keychain)
+	if err != nil {
+		panic(fmt.Errorf("load provider credentials: %w", err))
+	}
 	return &App{
 		gatewayAddr: current.Address(),
 		db:          db,
@@ -84,8 +92,9 @@ func NewApp() *App {
 		usage:       tracker,
 		secrets:     keychain,
 		keys:        keys,
-		proxy:       proxy.New(providers, mappings, keychain, tracker, keys),
+		proxy:       proxy.New(providers, mappings, credentials, tracker, keys),
 		settings:    prefs,
+		credentials: credentials,
 	}
 }
 
@@ -170,16 +179,25 @@ func (a *App) ToggleProvider(id string, enabled bool) error {
 	return a.providers.SetEnabled(id, enabled)
 }
 
-// DeleteProvider removes its local configuration, model mappings, and stored
-// API key. Deleted catalog providers are not re-added on the next startup.
+// DeleteProvider removes its local configuration, model mappings, and every
+// stored credential. Deleted catalog providers are not re-added on the next
+// startup.
 func (a *App) DeleteProvider(id string) error {
 	p, ok := a.providers.Get(id)
 	if !ok {
 		return fmt.Errorf("provider not found")
 	}
-	if _, err := a.secrets.Get(p.APIKeyRef); err == nil {
-		if err := a.secrets.Delete(p.APIKeyRef); err != nil {
-			return fmt.Errorf("delete provider API key: %w", err)
+	// The pool owns every key of this provider, including one adopted from the
+	// legacy single-key reference; it deletes the Keychain entries with the rows.
+	if err := a.credentials.DeleteByProvider(id); err != nil {
+		return fmt.Errorf("delete provider credentials: %w", err)
+	}
+	// A legacy reference that was never adopted still holds a secret.
+	if p.APIKeyRef != "" {
+		if _, err := a.secrets.Get(p.APIKeyRef); err == nil {
+			if err := a.secrets.Delete(p.APIKeyRef); err != nil {
+				return fmt.Errorf("delete provider API key: %w", err)
+			}
 		}
 	}
 	if err := a.mappings.DeleteByProvider(id); err != nil {
@@ -191,14 +209,87 @@ func (a *App) DeleteProvider(id string) error {
 	return nil
 }
 
-// SetProviderAPIKey stores only the credential in the OS Keychain. SQLite keeps
-// the provider's opaque APIKeyRef, never the token itself.
+// SetProviderAPIKey replaces a provider's primary credential. It keeps the
+// single-key call shape for compatibility, but the value lands in the pool: the
+// provider's existing first credential is updated when it has one, otherwise a
+// new one is added. Writing straight to the legacy api_key_ref would create a
+// second source of truth for the same key.
 func (a *App) SetProviderAPIKey(providerID, apiKey string) error {
 	p, ok := a.providers.Get(providerID)
 	if !ok {
 		return fmt.Errorf("provider not found")
 	}
-	return a.secrets.Set(p.APIKeyRef, apiKey)
+	if apiKey == "" {
+		return nil
+	}
+	if existing := a.credentials.List(providerID); len(existing) > 0 {
+		if err := a.credentials.ReplaceSecret(existing[0].ID, apiKey); err != nil {
+			return err
+		}
+		return nil
+	}
+	// No pooled key yet: adopt the provider's own reference so the key stays at
+	// the reference the rest of the system already knows.
+	ref := p.APIKeyRef
+	if ref == "" {
+		ref = "provider/" + providerID
+	}
+	if err := a.secrets.Set(ref, apiKey); err != nil {
+		return err
+	}
+	_, err := a.credentials.Adopt(providerID, ref, "默认密钥")
+	return err
+}
+
+// ProviderCredential is the UI-facing view of one pooled key. It deliberately
+// carries no secret material — not even a suffix, which would still be a
+// fragment of the credential.
+type ProviderCredential = credential.Credential
+
+// ListProviderCredentials reports a provider's key pool.
+func (a *App) ListProviderCredentials(providerID string) []ProviderCredential {
+	a.credentials.AdoptLegacy(providerID)
+	return a.credentials.List(providerID)
+}
+
+// AddProviderCredential stores a new upstream key in the Keychain and adds it to
+// the provider's pool.
+func (a *App) AddProviderCredential(providerID, name, apiKey string) (ProviderCredential, error) {
+	if _, ok := a.providers.Get(providerID); !ok {
+		return ProviderCredential{}, fmt.Errorf("provider not found")
+	}
+	return a.credentials.Add(providerID, name, apiKey)
+}
+
+// UpdateProviderCredential renames or reweights a pooled key.
+func (a *App) UpdateProviderCredential(id, name string, weight int) (ProviderCredential, error) {
+	return a.credentials.Update(id, name, weight)
+}
+
+// DeleteProviderCredential removes one pooled key and its Keychain entry.
+func (a *App) DeleteProviderCredential(id string) error {
+	return a.credentials.Delete(id)
+}
+
+// ToggleProviderCredential enables or disables one pooled key without deleting
+// it, so its history and its place in the rotation survive.
+func (a *App) ToggleProviderCredential(id string, enabled bool) error {
+	return a.credentials.SetEnabled(id, enabled)
+}
+
+// ResetProviderCredentialStatus clears a key's invalid state or cool-down so an
+// operator can retry it after fixing the upstream problem.
+func (a *App) ResetProviderCredentialStatus(id string) error {
+	return a.credentials.Reset(id)
+}
+
+// SetProviderCredentialMode records how the pool picks among a provider's keys:
+// session (sticky per conversation), round_robin, least_used, or random.
+func (a *App) SetProviderCredentialMode(providerID, mode string) error {
+	if _, ok := a.providers.Get(providerID); !ok {
+		return fmt.Errorf("provider not found")
+	}
+	return a.providers.SetCredentialMode(providerID, string(credential.NormalizeMode(mode)))
 }
 
 // FetchProviderModels loads an upstream catalog without persisting the API key
@@ -211,11 +302,13 @@ func (a *App) FetchProviderModels(providerID, kindName, baseURL, apiKey string) 
 	if existing, ok := a.providers.Get(providerID); ok {
 		kind = existing.Kind
 		if apiKey == "" {
-			secret, err := a.secrets.Get(existing.APIKeyRef)
+			// Ask the pool rather than reading the legacy reference: the key in
+			// use may be any pooled credential, not the first one.
+			lease, err := a.credentials.Acquire(providerID, string(credential.ModeLeastUsed), "")
 			if err != nil {
 				return nil, fmt.Errorf("read provider API Key: %w", err)
 			}
-			apiKey = secret
+			apiKey = lease.Secret()
 		}
 	}
 	ctx := a.ctx
@@ -391,9 +484,10 @@ func (a *App) GetUsageBreakdown() usage.Breakdown {
 		}
 	}
 	return usage.Breakdown{
-		Providers: providers,
-		Models:    a.usage.UsageByModel(),
-		Keys:      a.usage.UsageByKey(),
+		Providers:   providers,
+		Models:      a.usage.UsageByModel(),
+		Keys:        a.usage.UsageByKey(),
+		Credentials: a.usage.UsageByCredential(),
 	}
 }
 
@@ -444,19 +538,21 @@ func (a *App) previewTemplate(g *templates.Generator, tool templates.Tool) templ
 		slots = []templates.ModelSlot{}
 	}
 	return templates.Preview{
-		ID:            tool.ID,
-		Name:          tool.Name,
-		CLI:           tool.CLI,
-		Installed:     tool.Installed(),
-		ConfigPath:    tool.Config,
-		SkillsPath:    tool.SkillsDir,
-		Exists:        toolExists(tool.Config),
-		Current:       string(current),
-		Content:       g.Render(tool),
-		MultiProvider: tool.MultiProvider,
-		ModelSlots:    slots,
-		Routable:      g.Routable(),
-		SlotModels:    g.SlotModels(tool),
+		ID:             tool.ID,
+		Name:           tool.Name,
+		CLI:            tool.CLI,
+		Installed:      tool.Installed(),
+		ConfigPath:     tool.Config,
+		SkillsPath:     tool.SkillsDir,
+		Exists:         toolExists(tool.Config),
+		Current:        string(current),
+		Content:        g.Render(tool),
+		MultiProvider:  tool.MultiProvider,
+		ModelSlots:     slots,
+		Routable:       g.Routable(),
+		SlotModels:     g.SlotModels(tool),
+		Profiles:       g.ProfilesPreview(tool),
+		SelectedModels: g.SelectedModels(tool),
 	}
 }
 

@@ -9,8 +9,29 @@ export type Provider = {
   enabled: boolean;
   models: string[];
   availableModels: AvailableModel[];
+  // How the gateway picks among this provider's keys. Empty means the default
+  // ("session").
+  credentialMode: string;
   updatedAt: string;
 };
+// One upstream API key in a provider's pool. The secret itself never leaves the
+// OS Keychain, so this carries no key material at all. Mask is the derived
+// display form (ss****sfg); it is the only secret-derived value that is stored.
+export type ProviderCredential = {
+  id: string;
+  providerId: string;
+  name: string;
+  mask: string;
+  enabled: boolean;
+  weight: number;
+  // "active" or "invalid"; invalid means the upstream rejected the key.
+  status: string;
+  lastError: string;
+  createdAt: string;
+  updatedAt: string;
+};
+export type CredentialMode =
+  "session" | "round_robin" | "least_used" | "random";
 export type AvailableModel = { id: string; created: number };
 export type ModelMapping = {
   id: string;
@@ -61,6 +82,17 @@ export type ToolPreview = {
   modelSlots: ModelSlot[];
   routable: RoutableModel[];
   slotModels: Record<string, string>;
+  selectedModels: string[];
+  profiles: ToolProfile[];
+};
+// ToolProfile 是一次写入会同时生成的 Codex --profile 文件（一个模型一份）。
+export type ToolProfile = {
+  name: string;
+  model: string;
+  path: string;
+  exists: boolean;
+  current: string;
+  content: string;
 };
 export type Usage = {
   requests: number;
@@ -74,6 +106,9 @@ export type Usage = {
 export type UsageStat = {
   key: string;
   name?: string;
+  // Display form of an upstream key (ss****sfg); set only for the per-credential
+  // breakdown.
+  mask?: string;
   requests: number;
   successes: number;
   inputTokens: number;
@@ -85,6 +120,7 @@ export type UsageBreakdown = {
   providers: UsageStat[];
   models: UsageStat[];
   keys: UsageStat[];
+  credentials: UsageStat[];
 };
 export type RequestLog = {
   id: number;
@@ -105,6 +141,11 @@ export type RequestLog = {
   success: boolean;
   latencyMs: number;
   errorMessage: string;
+  // Which pooled upstream key served the request. credentialMask is the display
+  // form (ss****sfg); credentialName is the operator's label for it.
+  credentialId: string;
+  credentialName: string;
+  credentialMask: string;
 };
 export type RequestLogPage = {
   items: RequestLog[];

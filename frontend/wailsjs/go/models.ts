@@ -77,6 +77,41 @@ export namespace config {
 
 }
 
+export namespace credential {
+	
+	export class Credential {
+	    id: string;
+	    providerId: string;
+	    name: string;
+	    mask: string;
+	    enabled: boolean;
+	    weight: number;
+	    status: string;
+	    lastError: string;
+	    createdAt: string;
+	    updatedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Credential(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.providerId = source["providerId"];
+	        this.name = source["name"];
+	        this.mask = source["mask"];
+	        this.enabled = source["enabled"];
+	        this.weight = source["weight"];
+	        this.status = source["status"];
+	        this.lastError = source["lastError"];
+	        this.createdAt = source["createdAt"];
+	        this.updatedAt = source["updatedAt"];
+	    }
+	}
+
+}
+
 export namespace envcfg {
 	
 	export class Status {
@@ -262,6 +297,7 @@ export namespace provider {
 	    enabled: boolean;
 	    models: string[];
 	    availableModels: AvailableModel[];
+	    credentialMode: string;
 	    updatedAt: string;
 	
 	    static createFrom(source: any = {}) {
@@ -280,6 +316,7 @@ export namespace provider {
 	        this.enabled = source["enabled"];
 	        this.models = source["models"];
 	        this.availableModels = this.convertValues(source["availableModels"], AvailableModel);
+	        this.credentialMode = source["credentialMode"];
 	        this.updatedAt = source["updatedAt"];
 	    }
 	
@@ -517,6 +554,28 @@ export namespace templates {
 	        this.label = source["label"];
 	    }
 	}
+	export class ProfilePreview {
+	    name: string;
+	    model: string;
+	    path: string;
+	    exists: boolean;
+	    current: string;
+	    content: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProfilePreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.model = source["model"];
+	        this.path = source["path"];
+	        this.exists = source["exists"];
+	        this.current = source["current"];
+	        this.content = source["content"];
+	    }
+	}
 	export class Preview {
 	    id: string;
 	    name: string;
@@ -531,6 +590,8 @@ export namespace templates {
 	    modelSlots: ModelSlot[];
 	    routable: Model[];
 	    slotModels: Record<string, string>;
+	    profiles: ProfilePreview[];
+	    selectedModels: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Preview(source);
@@ -551,6 +612,8 @@ export namespace templates {
 	        this.modelSlots = this.convertValues(source["modelSlots"], ModelSlot);
 	        this.routable = this.convertValues(source["routable"], Model);
 	        this.slotModels = source["slotModels"];
+	        this.profiles = this.convertValues(source["profiles"], ProfilePreview);
+	        this.selectedModels = source["selectedModels"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -579,6 +642,7 @@ export namespace usage {
 	export class UsageStat {
 	    key: string;
 	    name?: string;
+	    mask?: string;
 	    requests: number;
 	    successes: number;
 	    inputTokens: number;
@@ -594,6 +658,7 @@ export namespace usage {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.key = source["key"];
 	        this.name = source["name"];
+	        this.mask = source["mask"];
 	        this.requests = source["requests"];
 	        this.successes = source["successes"];
 	        this.inputTokens = source["inputTokens"];
@@ -606,6 +671,7 @@ export namespace usage {
 	    providers: UsageStat[];
 	    models: UsageStat[];
 	    keys: UsageStat[];
+	    credentials: UsageStat[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Breakdown(source);
@@ -616,6 +682,7 @@ export namespace usage {
 	        this.providers = this.convertValues(source["providers"], UsageStat);
 	        this.models = this.convertValues(source["models"], UsageStat);
 	        this.keys = this.convertValues(source["keys"], UsageStat);
+	        this.credentials = this.convertValues(source["credentials"], UsageStat);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -655,6 +722,9 @@ export namespace usage {
 	    success: boolean;
 	    latencyMs: number;
 	    errorMessage: string;
+	    credentialId: string;
+	    credentialName: string;
+	    credentialMask: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestLog(source);
@@ -680,6 +750,9 @@ export namespace usage {
 	        this.success = source["success"];
 	        this.latencyMs = source["latencyMs"];
 	        this.errorMessage = source["errorMessage"];
+	        this.credentialId = source["credentialId"];
+	        this.credentialName = source["credentialName"];
+	        this.credentialMask = source["credentialMask"];
 	    }
 	}
 	export class RequestLogFilter {

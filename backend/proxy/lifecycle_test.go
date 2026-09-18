@@ -32,7 +32,7 @@ func TestProxyLifecycleRestartsAfterClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(registry, mappings, fakeSecrets{}, usage.NewSQLiteTracker(db), fakeKeys{})
+	s := newTestServer(db, registry, mappings, fakeSecrets{}, usage.NewSQLiteTracker(db), fakeKeys{})
 
 	addr := "127.0.0.1:19301"
 	if err := s.Start(addr); err != nil {
@@ -110,7 +110,7 @@ func TestStreamingCompletionOutlivesHeaderTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	tracker := usage.NewSQLiteTracker(db)
-	s := New(registry, mappings, fakeSecrets{"provider/test": "sk-test"}, tracker, fakeKeys{valid: "ar-local"})
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, tracker, fakeKeys{valid: "ar-local"})
 	// A whole-exchange Timeout would abort this body read; only the header is bounded.
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"client-model","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer ar-local")

@@ -16,6 +16,7 @@ import (
 
 	"agent-router/backend/apikey"
 	"agent-router/backend/config"
+	"agent-router/backend/credential"
 	"agent-router/backend/provider"
 	"agent-router/backend/proxy"
 	"agent-router/backend/settings"
@@ -23,11 +24,19 @@ import (
 	"agent-router/backend/usage"
 )
 
-type fakeSecrets struct{ token string }
+// fakeSecrets is a writable in-memory secret store: the credential pool must be
+// able to provision a key through it, so Set cannot be a no-op.
+type fakeSecrets map[string]string
 
-func (f fakeSecrets) Set(string, string) error   { return nil }
-func (f fakeSecrets) Get(string) (string, error) { return f.token, nil }
-func (f fakeSecrets) Delete(string) error        { return nil }
+func (f fakeSecrets) Set(account, value string) error { f[account] = value; return nil }
+func (f fakeSecrets) Get(account string) (string, error) {
+	value, ok := f[account]
+	if !ok {
+		return "", errors.New("secret not found")
+	}
+	return value, nil
+}
+func (f fakeSecrets) Delete(account string) error { delete(f, account); return nil }
 
 // freeAddr reserves a loopback port and releases it, so the proxy can bind it.
 func freeAddr(t *testing.T) string {
@@ -84,10 +93,16 @@ func newTestApp(t *testing.T, upstream http.Handler) (*App, *[]PlaygroundChunk) 
 		t.Fatal(err)
 	}
 
+	secrets := fakeSecrets{"provider/test": "sk-test"}
+	credentials, err := credential.NewPool(db, secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	app := &App{ctx: context.Background(), db: db, providers: registry,
 		mappings: mappings, keys: keys, settings: prefs,
-		secrets: fakeSecrets{token: "sk-test"}, usage: usage.NewSQLiteTracker(db)}
-	app.proxy = proxy.New(registry, mappings, app.secrets, app.usage, keys)
+		secrets: secrets, usage: usage.NewSQLiteTracker(db), credentials: credentials}
+	app.proxy = proxy.New(registry, mappings, app.credentials, app.usage, keys)
 	app.gatewayAddr = freeAddr(t)
 	if err := app.proxy.Start(app.gatewayAddr); err != nil {
 		t.Fatal(err)
