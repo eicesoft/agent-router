@@ -7,3 +7,4 @@ frontend/dist
 .tmp-verify
 .gocache
 .gotmp
+thinking-effort-loaded.json

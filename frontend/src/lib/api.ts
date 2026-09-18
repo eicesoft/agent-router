@@ -61,6 +61,7 @@ const demo: Bootstrap = {
       clientModel: "gpt-4.1",
       providerId: "openai",
       upstreamModel: "gpt-4.1",
+      aliases: ["gpt-4.1-latest"],
       enabled: true,
     },
   ],

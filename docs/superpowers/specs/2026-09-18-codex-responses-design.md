@@ -292,10 +292,36 @@ Codex CLI
 |---|---|
 | `{"type":"function","name","description","strict","parameters"}` | `{"type":"function","function":{"name","description","parameters"}}`（丢弃 `strict`、`defer_loading`） |
 | `{"type":"custom","name","description","format"}` | `{"type":"function","function":{"name","description","parameters":{"type":"object","properties":{"input":{"type":"string","description":"Raw "+syntax+" payload"}},"required":["input"],"additionalProperties":false}}}` |
-| `{"type":"web_search",...}` / `{"type":"tool_search",...}` / `{"type":"namespace",...}` | 丢弃；把名字收集进 `droppedTools`，写进请求日志的 error_message 供排查 |
+| `{"type":"namespace","name":N,"tools":[...]}` | 递归展开成员，按 Codex 的 `(namespace, name)` 语义改名后下发（见下方「命名空间与 Responses Lite」） |
+| `{"type":"web_search",...}` / `{"type":"tool_search",...}`、`namespace` 里的 hosted 成员 | 丢弃；把类型或名字收集进 `droppedTools`，写进请求日志的 error_message 供排查 |
 
-custom 工具的识别集合（名字 → true）要传给响应侧，用于把上游 `tool_calls`
-还原成 `custom_tool_call` item 而非 `function_call`。
+工具的识别结果要传给响应侧，用于把上游 `tool_calls` 还原成 Codex 认识的名字与
+item 类型（custom 工具回 `custom_tool_call` 而非 `function_call`）。
+
+### 命名空间与 Responses Lite
+
+Codex 的 `ToolName` 是 `(namespace, name)` 二元组，不是 `"ns.tool"` 字符串
+（`codex-rs/protocol/src/tool_name.rs` 的 `with_default_namespace`）；Chat 上游只接受
+一个扁平函数名，且普遍按 `^[a-zA-Z0-9_-]{1,64}$` 校验，点号会被直接拒掉。网关因此
+做一层双向改名：
+
+- **下发**：`(namespace, name)` → 裸 `name`（namespace 为空或 `functions`）或
+  `namespace__name`（与 Codex code mode 给嵌套工具拼 JS 标识符的写法一致），
+  撞名时追加 `_2`、`_3` 后缀；
+- **还原**：上游返回的函数名查回 `(namespace, name)`；`function_call` 只在 namespace
+  非默认时带 `namespace` 字段，custom 工具仍回 `custom_tool_call` 的原始字符串
+  `input`；
+- **历史**：input 里的 `function_call` / `custom_tool_call` 也按同一张表换回上游
+  函数名，否则上游会看到一个不在自己工具表里的函数。
+
+Responses Lite（`use_responses_lite: true` 的模型，如 `gpt-6-astra`、`gpt-5.6-*`）
+**不下发顶层 `tools`、也不下发 `instructions`**，全部工具声明裹在 `input[0]` 的
+`{"type":"additional_tools","role":"developer","tools":[...]}` 里，外层再套 namespace。
+这个 item 不是聊天消息，必须当工具表解析；漏掉它等于整份工具表蒸发，模型只能把调用
+当正文吐出来（表现为 `<tool_call><function=functions.exec>`）。
+
+因此 `namespace` **不能丢弃**——早期设计里「`namespace` 当作 hosted 工具丢弃」的
+判断只对 `web_search` / `tool_search` 成立。
 
 ### 其余字段
 

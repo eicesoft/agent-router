@@ -82,7 +82,7 @@ func (a *streamAccumulator) addToolCalls(raw json.RawMessage) {
 // 历史，正文先于调用能让 TUI 的展示顺序符合直觉。
 //
 // 正文与推理复用流式阶段已经宣告出去的 id，让 added 与 done 指向同一个 item。
-func (a *streamAccumulator) items(customTools map[string]bool) []responsesItem {
+func (a *streamAccumulator) items(plan *toolPlan) []responsesItem {
 	var items []responsesItem
 	if text := a.reasoning.String(); strings.TrimSpace(text) != "" {
 		items = append(items, responsesItem{
@@ -101,18 +101,35 @@ func (a *streamAccumulator) items(customTools map[string]bool) []responsesItem {
 		if call.Name == "" {
 			continue
 		}
-		if customTools[call.Name] {
-			// freeform 工具：把 arguments 里的 input 展开成 Codex 认的原始字符串。
+		route, ok := plan.lookup(call.Name)
+		if !ok {
+			// 映射表里没有这个名字：模型编了一个不存在的函数。回给它一个带裸名的
+			// function_call，让 Codex 报「unsupported call」——网关替它猜一个工具
+			// 反而是更坏的结果。
 			items = append(items, responsesItem{
-				"type": "custom_tool_call", "id": newItemID("ctc"),
-				"call_id": call.ID, "name": call.Name, "input": customToolInput(call.Arguments),
+				"type": "function_call", "id": newItemID("fc"),
+				"call_id": call.ID, "name": call.Name, "arguments": call.Arguments,
 			})
 			continue
 		}
-		items = append(items, responsesItem{
+		if route.custom {
+			// freeform 工具：把 arguments 里的 input 展开成 Codex 认的原始字符串。
+			items = append(items, responsesItem{
+				"type": "custom_tool_call", "id": newItemID("ctc"),
+				"call_id": call.ID, "name": route.name, "input": customToolInput(call.Arguments),
+			})
+			continue
+		}
+		item := responsesItem{
 			"type": "function_call", "id": newItemID("fc"),
-			"call_id": call.ID, "name": call.Name, "arguments": call.Arguments,
-		})
+			"call_id": call.ID, "name": route.name, "arguments": call.Arguments,
+		}
+		// Codex 按 (namespace, name) 解析调用，namespace 不是 "functions" 时必须
+		// 带上，否则嵌套工具会解析成默认 namespace 里的同名工具。
+		if route.namespace != "" {
+			item["namespace"] = route.namespace
+		}
+		items = append(items, item)
 	}
 	return items
 }
@@ -204,7 +221,7 @@ func chatUsageToResponses(usage tokenUsage) map[string]any {
 }
 
 // chatResponseToResponses 转换非流式的上游响应。返回转换后的 JSON 与用量。
-func chatResponseToResponses(body []byte, clientModel string, customTools map[string]bool) ([]byte, tokenUsage) {
+func chatResponseToResponses(body []byte, clientModel string, plan *toolPlan) ([]byte, tokenUsage) {
 	var upstream struct {
 		Choices []struct {
 			Message struct {
@@ -238,7 +255,7 @@ func chatResponseToResponses(body []byte, clientModel string, customTools map[st
 		acc.addToolCalls(message.ToolCalls)
 	}
 
-	out, _ := json.Marshal(responsesEnvelope(newResponseID(), clientModel, "completed", acc.items(customTools), chatUsageToResponses(usage)))
+	out, _ := json.Marshal(responsesEnvelope(newResponseID(), clientModel, "completed", acc.items(plan), chatUsageToResponses(usage)))
 	return out, usage
 }
 
@@ -248,7 +265,7 @@ func chatResponseToResponses(body []byte, clientModel string, customTools map[st
 // 返回的 error 只在流确实损坏时非 nil：上游中途断掉、或从未给出 finish_reason。
 // 那种情况下不发 response.completed——宁可让 Codex 知道这次交换坏了并重试，也不能
 // 让它以为这是正常的回合结束（与 pipeOpenAIStreamToAnthropic 的判断一致）。
-func pipeChatStreamToResponses(w io.Writer, body io.ReadCloser, clientModel string, customTools map[string]bool, captured *strings.Builder) (tokenUsage, error) {
+func pipeChatStreamToResponses(w io.Writer, body io.ReadCloser, clientModel string, plan *toolPlan, captured *strings.Builder) (tokenUsage, error) {
 	flusher, flushable := w.(http.Flusher)
 	dest := w
 	if captured != nil {
@@ -374,7 +391,7 @@ func pipeChatStreamToResponses(w io.Writer, body io.ReadCloser, clientModel stri
 
 	// 收尾：正文与推理的 item 在流式阶段已经宣告过，这里只补 done；工具调用因为
 	// 参数要到流结束才完整，added 与 done 都在这里成对发出。
-	items := acc.items(customTools)
+	items := acc.items(plan)
 	streamed := map[string]bool{}
 	if acc.textID != "" {
 		streamed[acc.textID] = true

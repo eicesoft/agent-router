@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -277,5 +278,72 @@ func TestPlaygroundSendsReasoningEffort(t *testing.T) {
 	}
 	if string(received["reasoning_effort"]) != `"high"` {
 		t.Fatalf("high missing from the request: %s", received["reasoning_effort"])
+	}
+}
+
+// 别名要能穿过真实的 HTTP 网关：客户端发别名，上游收到的是映射后的模型名，
+// 日志仍按映射本身的客户端模型名记录，便于用量按映射聚合。
+func TestPlaygroundChatRoutesAliasThroughGateway(t *testing.T) {
+	var received map[string]json.RawMessage
+	app, _ := newTestApp(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &received); err != nil {
+			t.Errorf("bad upstream body: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	if _, err := app.mappings.Save(config.ModelMapping{
+		ID: "m", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model",
+		Aliases: []string{"client-alias"}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.PlaygroundChat("run-8", "client-alias", userMessage(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(received["model"]); got != `"upstream-model"` {
+		t.Fatalf("alias did not route to the upstream model: %s", got)
+	}
+	// 客户端读到 [DONE] 就返回，可能比网关自己写日志早一瞬，因此轮询。
+	var logged []usage.RequestLog
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		page, err := app.usage.ListRequestLogs(1, 20, usage.RequestLogFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Items) == 1 {
+			logged = page.Items
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(logged) != 1 || logged[0].ClientModel != "client-model" {
+		t.Fatalf("alias request was not logged against its mapping: %+v", logged)
+	}
+}
+
+// 别名不对外宣告：/v1/models 与生成给 CLI 的模型列表都只列客户端模型名。
+func TestAliasStaysOutOfRoutableModelLists(t *testing.T) {
+	app, _ := newTestApp(t, sseHandler("data: [DONE]\n\n", 200))
+	if _, err := app.mappings.Save(config.ModelMapping{
+		ID: "m", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model",
+		Aliases: []string{"client-alias"}, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, model := range app.routableModels() {
+		names = append(names, model.ID)
+		if model.Name != model.ID {
+			t.Fatalf("model name diverged from its id: %#v", model)
+		}
+	}
+	if !slices.Contains(names, "client-model") {
+		t.Fatalf("mapped model missing from routable models: %v", names)
+	}
+	if slices.Contains(names, "client-alias") {
+		t.Fatalf("alias leaked into routable models: %v", names)
 	}
 }

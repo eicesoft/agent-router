@@ -38,6 +38,9 @@ export type ModelMapping = {
   clientModel: string;
   providerId: string;
   upstreamModel: string;
+  // 与 clientModel 等价的额外客户端模型名。仅用于命中路由，不会出现在
+  // /v1/models 与生成的 CLI 配置中。
+  aliases: string[];
   enabled: boolean;
 };
 export type LocalAPIKey = {

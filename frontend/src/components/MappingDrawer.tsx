@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Label, TextField, Separator } from "@heroui/react";
-import { Input } from "@heroui/react";
-import { X } from "lucide-react";
+import {
+  Button,
+  Input,
+  Label,
+  Separator,
+  Tag,
+  TagGroup,
+  TextField,
+} from "@heroui/react";
+import { Plus, X } from "lucide-react";
 import { defaultClientModel } from "../lib/naming";
 import type { ModelMapping, Provider } from "../lib/types";
 import { FieldSelect } from "./FieldSelect";
@@ -11,6 +18,7 @@ export type MappingFormState = {
   clientModel: string;
   providerId: string;
   upstreamModel: string;
+  aliases: string[];
 };
 
 export type MappingDraft = Pick<
@@ -38,7 +46,11 @@ export function MappingDrawer({
     clientModel: "",
     providerId: "",
     upstreamModel: "",
+    aliases: [],
   });
+  // 别名的自由输入框内容：回车或点「添加」才落进 form.aliases，避免每敲一个
+  // 字符就生成一个半截别名。
+  const [aliasDraft, setAliasDraft] = useState("");
   // 启用的提供商及其配置激活的模型，作为上游候选；正在编辑的提供商即使停用也保留。
   const candidates = useMemo(() => {
     const list = providers
@@ -61,7 +73,9 @@ export function MappingDrawer({
         ? preferred
         : (candidates[0]?.id ?? ""),
       upstreamModel: initial?.upstreamModel ?? mapping?.upstreamModel ?? "",
+      aliases: mapping?.aliases ?? [],
     });
+    setAliasDraft("");
   }, [mapping, initial, isOpen, candidates]);
 
   if (!isOpen) return null;
@@ -75,6 +89,20 @@ export function MappingDrawer({
       (model) => model === form.upstreamModel,
     );
     return p && m ? defaultClientModel(p, m) : form.clientModel;
+  };
+
+  const addAlias = () => {
+    const name = aliasDraft.trim();
+    if (!name) return;
+    // 客户端模型名本身就是可命中的名字，再存一遍只会多一行重复标签。
+    if (name === (form.clientModel.trim() || impliedName())) {
+      setAliasDraft("");
+      return;
+    }
+    setForm((c) =>
+      c.aliases.includes(name) ? c : { ...c, aliases: [...c.aliases, name] },
+    );
+    setAliasDraft("");
   };
 
   const submit = async () => {
@@ -162,6 +190,67 @@ export function MappingDrawer({
             （未设置前缀时用提供商名称），例如 <code>{impliedName()}</code>；
             可重设置为任意名称。
           </p>
+          <Separator className="my-1" />
+          <section
+            className="mapping-alias-field"
+            aria-labelledby="mapping-alias-heading"
+          >
+            <b id="mapping-alias-heading">模型别名</b>
+            <div className="mapping-alias-input">
+              <TextField
+                value={aliasDraft}
+                onChange={setAliasDraft}
+                aria-label="模型别名"
+              >
+                <Input
+                  placeholder="输入别名后回车，例如 gpt-5"
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    // 这个输入框不提交表单：回车只收一个别名。
+                    event.preventDefault();
+                    addAlias();
+                  }}
+                />
+              </TextField>
+              <Button
+                size="sm"
+                variant="outline"
+                isDisabled={!aliasDraft.trim()}
+                onPress={addAlias}
+                aria-label="添加别名"
+              >
+                <Plus size={14} />
+              </Button>
+            </div>
+            {form.aliases.length > 0 ? (
+              <TagGroup
+                size="sm"
+                variant="surface"
+                aria-label="已添加的模型别名"
+                onRemove={(keys) =>
+                  setForm((c) => ({
+                    ...c,
+                    aliases: c.aliases.filter((name) => !keys.has(name)),
+                  }))
+                }
+              >
+                <TagGroup.List>
+                  {form.aliases.map((name) => (
+                    <Tag key={name} id={name}>
+                      {name}
+                    </Tag>
+                  ))}
+                </TagGroup.List>
+              </TagGroup>
+            ) : (
+              <p className="provider-form-note">尚未添加别名</p>
+            )}
+            <p className="provider-form-note">
+              别名与客户端模型名等价：客户端用它发起请求会命中同一条映射。
+              别名只用于命中路由，不会出现在 <code>/v1/models</code>
+              与生成的 CLI 配置里，也不能与其它映射已用的名字重复。
+            </p>
+          </section>
         </div>
         <div className="provider-drawer-footer">
           <Button size="sm" variant="outline" onPress={onClose}>

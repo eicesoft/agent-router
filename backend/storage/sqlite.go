@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS deleted_providers (
 );
 CREATE TABLE IF NOT EXISTS model_mappings (
   id TEXT PRIMARY KEY, client_model TEXT NOT NULL UNIQUE, provider_id TEXT NOT NULL,
-  upstream_model TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1
+  upstream_model TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+  aliases_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS usage_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, provider_id TEXT NOT NULL,
@@ -138,6 +139,9 @@ CREATE INDEX IF NOT EXISTS idx_provider_credentials_provider ON provider_credent
 		// request_logs 快照一份，使凭据被删除后历史日志仍可读。
 		{"provider_credentials", "mask", "TEXT NOT NULL DEFAULT ''"},
 		{"request_logs", "credential_mask", "TEXT NOT NULL DEFAULT ''"},
+		// 映射别名：客户端可用这些名字命中同一条映射，但别名不出现在
+		// /v1/models 与生成给 CLI 的模型列表里，仅用于请求路由。
+		{"model_mappings", "aliases_json", "TEXT NOT NULL DEFAULT '[]'"},
 	} {
 		var exists int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, column.table, column.name).Scan(&exists); err != nil {

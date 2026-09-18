@@ -104,7 +104,7 @@ func TestChatCompletionsMapsAndForwardsCompatibleRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true})
+	_, err = mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Aliases: []string{"client-alias"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,6 +142,55 @@ func TestChatCompletionsMapsAndForwardsCompatibleRequest(t *testing.T) {
 	}
 }
 
+// The alias is a second name for the same route: the request must take the
+// identical path as the client model name, and the log still records the
+// canonical client model rather than whatever name the caller happened to use.
+func TestChatCompletionsRoutesAliasToUpstreamModel(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), `"model":"upstream-model"`) {
+			t.Errorf("alias was not resolved to the upstream model: %s", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-alias","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	}))
+	defer upstream.Close()
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry, err := provider.NewRegistry(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	mappings, err := config.NewMappingStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Aliases: []string{" client-alias ", "client-model"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"client-alias","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Authorization", "Bearer ar-local")
+	response := httptest.NewRecorder()
+	s.chatCompletions(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs.Items) != 1 || logs.Items[0].ClientModel != "client-model" || logs.Items[0].UpstreamModel != "upstream-model" {
+		t.Fatalf("alias request was not logged against its mapping: %+v", logs.Items)
+	}
+}
+
 func TestTokensFromResponseReadsSSEUsageDetails(t *testing.T) {
 	body := []byte("data: {\"choices\":[],\"usage\":null}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":88,\"completion_tokens\":2526,\"prompt_tokens_details\":{\"cached_tokens\":12},\"completion_tokens_details\":{\"reasoning_tokens\":878}}}\n\ndata: [DONE]\n")
 	got := tokensFromResponse(body)
@@ -171,8 +220,8 @@ func TestListModelsReturnsOnlyRoutableMappings(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, mapping := range []config.ModelMapping{
-		{ID: "routable", ClientModel: "mapped-model", ProviderID: "enabled", UpstreamModel: "edited-upstream", Enabled: true},
-		{ID: "mapping-disabled", ClientModel: "disabled-mapping", ProviderID: "enabled", UpstreamModel: "disabled-upstream", Enabled: false},
+		{ID: "routable", ClientModel: "mapped-model", ProviderID: "enabled", UpstreamModel: "edited-upstream", Aliases: []string{"mapped-alias"}, Enabled: true},
+		{ID: "mapping-disabled", ClientModel: "disabled-mapping", ProviderID: "enabled", UpstreamModel: "disabled-upstream", Aliases: []string{"disabled-alias"}, Enabled: false},
 		{ID: "provider-disabled", ClientModel: "unavailable-model", ProviderID: "disabled", UpstreamModel: "upstream-model", Enabled: true},
 	} {
 		if _, err := mappings.Save(mapping); err != nil {
@@ -215,6 +264,11 @@ func TestListModelsReturnsOnlyRoutableMappings(t *testing.T) {
 		}
 		if model.ID == "disabled-mapping" || model.ID == "unavailable-model" || model.ID == "local/edited-upstream" || model.ID == "local/disabled-upstream" {
 			t.Fatalf("unroutable model returned: %#v", model)
+		}
+		// 别名只用于命中路由，不是网关对外宣告的模型名：它不该出现在
+		// /v1/models，也不该被生成的 CLI 配置（同一份 EffectiveMappings）列出。
+		if model.ID == "mapped-alias" || model.ID == "disabled-alias" {
+			t.Fatalf("alias leaked into the model list: %#v", model)
 		}
 	}
 	if !found {

@@ -267,9 +267,12 @@ func (s *Server) effectiveMappings() []config.ModelMapping {
 }
 
 func (s *Server) resolveMapping(clientModel string) (config.ModelMapping, bool) {
+	name := strings.TrimSpace(clientModel)
 	for _, mapping := range s.effectiveMappings() {
-		if mapping.ClientModel == clientModel {
-			return mapping, true
+		for _, candidate := range mapping.Names() {
+			if candidate == name {
+				return mapping, true
+			}
 		}
 	}
 	return config.ModelMapping{}, false

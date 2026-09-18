@@ -354,6 +354,10 @@ export default function App() {
       clientModel: form.clientModel.trim() || form.id,
       providerId: form.providerId,
       upstreamModel: form.upstreamModel,
+      // 别名在抽屉里已裁掉空白；这里只去重并剔除与客户端模型名相同的项。
+      aliases: form.aliases.filter(
+        (name) => name && name !== (form.clientModel.trim() || form.id),
+      ),
       // 编辑已有映射时保留其启停状态。
       enabled:
         data.mappings.find((item) => item.id === form.id)?.enabled ?? true,
@@ -1788,6 +1792,7 @@ function deriveAutoMappings(providers: Provider[]): ModelMapping[] {
         clientModel: defaultClientModel(provider, model),
         providerId: provider.id,
         upstreamModel: model,
+        aliases: [],
         enabled: true,
       });
     }
@@ -1828,6 +1833,7 @@ function Mappings({
           clientModel: defaultClientModel(provider, model),
           providerId: provider.id,
           upstreamModel: model,
+          aliases: [],
           enabled: true,
         },
       })),
@@ -1883,6 +1889,20 @@ function Mappings({
                     <Link size={13} />
                     <code>{model}</code>
                   </div>
+                  {/* 别名是另一条能命中这张卡片的客户端模型名，直接列出来，
+                      否则用户只能进抽屉才知道自己配过哪些名字。 */}
+                  {mapping.aliases.length > 0 && (
+                    <div
+                      className="route-card-aliases"
+                      title={mapping.aliases.join("、")}
+                    >
+                      {mapping.aliases.map((alias) => (
+                        <span className="route-alias" key={alias}>
+                          {alias}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </article>
               ))}
             </div>

@@ -963,6 +963,27 @@ code {
   min-width: 0;
   flex: 1;
 }
+/* 别名徽标：卡片里只占一行，超出裁掉（完整列表在 title 与抽屉里）。 */
+.route-card-aliases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  max-height: 20px;
+  overflow: hidden;
+}
+.route-alias {
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--chip-ink);
+  background: var(--chip-bg);
+  border-radius: 5px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
 .agent-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(180px, 1fr));
@@ -1427,6 +1448,43 @@ code {
 /* The note class carried no rule, so it rendered as full-size body text. */
 .provider-drawer .provider-form-note {
   font-size: 11px;
+}
+/* 别名区：输入框 + 添加按钮一行，已添加的别名以 TagGroup 排在下面。
+   抽屉里 TagGroup 默认高度偏大，按 11-12px 的紧凑刻度收回一档。 */
+.mapping-alias-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mapping-alias-field > b {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-body);
+}
+.mapping-alias-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* 输入框吃掉剩余宽度。HeroUI 的 TextField 是 flex 列容器，不加这一档时它会
+   按内容宽度收缩，右侧「添加」按钮会飘到中间。 */
+.mapping-alias-field .textfield {
+  flex: 1;
+  min-width: 0;
+}
+.mapping-alias-field [data-slot="input"] {
+  width: 100%;
+}
+.provider-drawer .mapping-alias-field .tag-group__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.provider-drawer .mapping-alias-field .tag {
+  height: 22px !important;
+  padding: 0 4px 0 8px !important;
+  font-size: 11px !important;
+  border-radius: 6px !important;
 }
 [data-slot="modal-backdrop"] {
   background: var(--overlay-scrim) !important;

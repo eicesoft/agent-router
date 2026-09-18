@@ -59,6 +59,7 @@ export namespace config {
 	    clientModel: string;
 	    providerId: string;
 	    upstreamModel: string;
+	    aliases: string[];
 	    enabled: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -71,6 +72,7 @@ export namespace config {
 	        this.clientModel = source["clientModel"];
 	        this.providerId = source["providerId"];
 	        this.upstreamModel = source["upstreamModel"];
+	        this.aliases = source["aliases"];
 	        this.enabled = source["enabled"];
 	    }
 	}
