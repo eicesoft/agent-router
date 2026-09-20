@@ -39,6 +39,11 @@ func renderFreshCodexTOML(g *Generator, t Tool) []string {
 	if model := g.slotModel(t, "MODEL", 0); model != "" {
 		lines = append(lines, fmt.Sprintf("model = %q", model))
 		lines = append(lines, fmt.Sprintf("model_provider = %q", g.providerName))
+		// 目录条目本身要自带系统提示词，只有拿到 Codex 自己的模板才写这一行；
+		// 否则宁可退回 256k，也不能写一份让 Codex 加载不了的目录。
+		if _, ok := g.CodexCatalog(t); ok {
+			lines = append(lines, codexCatalogLine())
+		}
 		lines = append(lines, "")
 	}
 	return append(lines, codexProviderBlock(g)...)
@@ -305,7 +310,9 @@ type codexEdits struct {
 	// 0 表示不存在。两条顶层键必须落在第一个表头之前：TOML 里出现在表头之后的键
 	// 属于那张表，写成顶层键会被解析成别的意思。
 	modelLine, modelProviderLine int
-	firstTableLine               int
+	// catalogLine 是顶层 model_catalog_json 的行号，0 表示不存在。
+	catalogLine    int
+	firstTableLine int
 }
 
 // codexEdit 是一次行区间替换。last == first-1 表示纯插入。
@@ -336,8 +343,23 @@ func mergeCodexTOML(data []byte, g *Generator, t Tool) (string, bool) {
 	}
 
 	model := g.slotModel(t, "MODEL", 0)
-
+	// 只有真正能写出一份 Codex 能加载的目录时才写这一行（见 codex_catalog.go）。
+	catalog := ""
+	if _, ok := g.CodexCatalog(t); ok {
+		catalog = codexCatalogLine()
+	}
 	replacements := make([]codexEdit, 0, 3)
+	// 写不出目录、但文件里还留着指向它的那一行、文件又已被删掉时，必须把这行摘掉：
+	// 悬空的指针和缺文件是一回事，Codex 照样开不了会话。文件还在就不动它——那说明
+	// 上次写入的目录仍然有效，删掉等于白白丢掉 1M 窗口。
+	if catalog == "" && edits.catalogLine != 0 &&
+		strings.Contains(lines[edits.catalogLine-1], codexCatalogFile) {
+		if _, err := os.Stat(codexCatalogPath(t.Config)); err != nil {
+			replacements = append(replacements, codexEdit{
+				first: edits.catalogLine, last: edits.catalogLine, order: codexOrderTopLevel,
+			})
+		}
+	}
 	if edits.providerAbsent {
 		block := codexProviderBlock(g)
 		if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
@@ -360,6 +382,12 @@ func mergeCodexTOML(data []byte, g *Generator, t Tool) (string, bool) {
 	if model != "" {
 		modelLine := fmt.Sprintf("model = %q", model)
 		providerLine := fmt.Sprintf("model_provider = %q", g.providerName)
+		// 顶层键的插入块：目录行紧跟在 model_provider 之后，读起来是一条完整的
+		// 「用哪个模型、走哪个网关、目录在哪」的声明。
+		block := []string{modelLine, providerLine}
+		if catalog != "" {
+			block = append(block, catalog)
+		}
 
 		switch {
 		case edits.modelLine == 0 && edits.modelProviderLine == 0:
@@ -368,22 +396,31 @@ func mergeCodexTOML(data []byte, g *Generator, t Tool) (string, bool) {
 			if insertAt == 0 {
 				insertAt = len(lines) + 1
 			}
+			if edits.catalogLine != 0 {
+				block = block[:2]
+			}
+			if catalog != "" && edits.catalogLine != 0 {
+				replacements = append(replacements, codexEdit{
+					first: edits.catalogLine, last: edits.catalogLine,
+					order: codexOrderTopLevel, lines: []string{catalog},
+				})
+			}
 			replacements = append(replacements, codexEdit{
 				first: insertAt, last: insertAt - 1, order: codexOrderTopLevel,
-				lines: []string{modelLine, providerLine},
+				lines: block,
 			})
 		case edits.modelProviderLine == 0:
 			// model 已存在，model_provider 缺失：替换 model 行时把 provider 一并写上，
 			// 避免在同一位置插两次。
 			replacements = append(replacements, codexEdit{
 				first: edits.modelLine, last: edits.modelLine, order: codexOrderTopLevel,
-				lines: []string{modelLine, providerLine},
+				lines: block,
 			})
 		case edits.modelLine == 0:
 			// model_provider 已存在，model 缺失：同上，替换时把 model 补在它前面。
 			replacements = append(replacements, codexEdit{
 				first: edits.modelProviderLine, last: edits.modelProviderLine, order: codexOrderTopLevel,
-				lines: []string{modelLine, providerLine},
+				lines: block,
 			})
 		default:
 			replacements = append(replacements,
@@ -396,6 +433,19 @@ func mergeCodexTOML(data []byte, g *Generator, t Tool) (string, bool) {
 					order: codexOrderTopLevel, lines: []string{providerLine},
 				},
 			)
+			if catalog != "" {
+				// 文件里已有目录行就改它；没有就插在 model_provider 之后，用户的其余
+				// 顶层键与顺序一律不动。
+				target := edits.modelProviderLine
+				last := edits.modelProviderLine
+				if edits.catalogLine != 0 {
+					target, last = edits.catalogLine, edits.catalogLine
+				}
+				replacements = append(replacements, codexEdit{
+					first: target, last: last,
+					order: codexOrderTopLevel, lines: []string{catalog},
+				})
+			}
 		}
 	}
 
@@ -476,6 +526,8 @@ func locateCodex(data []byte, providerName string) (codexEdits, bool) {
 				edits.modelLine = line
 			case "model_provider":
 				edits.modelProviderLine = line
+			case "model_catalog_json":
+				edits.catalogLine = line
 			}
 		}
 	}

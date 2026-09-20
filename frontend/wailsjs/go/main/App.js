@@ -122,6 +122,10 @@ export function SaveSkillBody(arg1, arg2) {
   return window['go']['main']['App']['SaveSkillBody'](arg1, arg2);
 }
 
+export function SetChainMode(arg1, arg2) {
+  return window['go']['main']['App']['SetChainMode'](arg1, arg2);
+}
+
 export function SetProviderAPIKey(arg1, arg2) {
   return window['go']['main']['App']['SetProviderAPIKey'](arg1, arg2);
 }

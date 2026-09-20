@@ -41,6 +41,8 @@ export function Sidebar({
   providerCount,
   keyCount,
   mappingCount,
+  agentCount,
+  skillCount,
   proxyRunning,
   width,
   onOpenSettings,
@@ -52,6 +54,8 @@ export function Sidebar({
   providerCount: number;
   keyCount: number;
   mappingCount: number;
+  agentCount: number;
+  skillCount: number;
   proxyRunning: boolean;
   width: number;
   onOpenSettings: () => void;
@@ -157,6 +161,12 @@ export function Sidebar({
             )}
             {id === "mappings" && mappingCount > 0 && (
               <span className="nav-count">{mappingCount}</span>
+            )}
+            {id === "skills" && skillCount > 0 && (
+              <span className="nav-count">{skillCount}</span>
+            )}
+            {id === "agents" && agentCount > 0 && (
+              <span className="nav-count">{agentCount}</span>
             )}
           </Button>
         ))}

@@ -234,6 +234,14 @@ type Generator struct {
 	routable     []Model
 	slotModels   map[string]string   // slot key -> routable model id (nil = auto)
 	selected     map[string]struct{} // enabled routable ids (nil = all)
+	// catalogTemplate 是克隆 Codex 模型目录用的元数据条目。生产路径不设置它，
+	// 由 readCodexCatalogTemplate 从 Codex 自己的 models_cache.json 读；测试用
+	// WithCodexCatalogTemplate 固定输入，免得断言依赖这台机器上装了哪个版本。
+	catalogTemplate map[string]any
+	// catalogAliases 是「客户端模型名 -> 它的别名」。别名与正名在网关上完全等价，
+	// 所以 Codex 用别名当 model 时也必须能在目录里查到元数据，否则会掉回兜底窗口。
+	// 别名不进 routable（它对任何模型清单都不可见），只在这里补进目录。
+	catalogAliases map[string][]string
 }
 
 // Model is one routable client model: the id resolvable by the gateway and its
@@ -280,6 +288,15 @@ func (g *Generator) WithModels(ids []string) *Generator {
 	for _, id := range ids {
 		g.selected[id] = struct{}{}
 	}
+	return g
+}
+
+// WithCatalogAliases records extra client names that resolve to the same route as a
+// routable model. Aliases are invisible in every model list by design, but Codex
+// still needs metadata for them: when the user sets `model` to an alias, a catalog
+// without that slug falls back to the 272k default window.
+func (g *Generator) WithCatalogAliases(aliases map[string][]string) *Generator {
+	g.catalogAliases = aliases
 	return g
 }
 

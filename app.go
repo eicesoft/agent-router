@@ -115,6 +115,7 @@ func (a *App) GetBootstrap() Bootstrap {
 		APIKeys:      a.keys.List(),
 		ProxyRunning: a.proxy.Running(),
 		Settings:     a.appSettings(),
+		ChainModes:   a.mappings.ChainModes(),
 	}
 }
 
@@ -320,6 +321,13 @@ func (a *App) FetchProviderModels(providerID, kindName, baseURL, apiKey string) 
 
 func (a *App) SaveModelMapping(input config.ModelMapping) (config.ModelMapping, error) {
 	return a.mappings.Save(input)
+}
+
+// SetChainMode records how a same-name chain picks its starting provider:
+// "failover" (always the chain head, the default) or "round_robin" (each
+// request starts one provider further along, then still fails over).
+func (a *App) SetChainMode(clientModel, mode string) error {
+	return a.mappings.SetChainMode(clientModel, mode)
 }
 
 func (a *App) SaveLocalAPIKey(input apikey.Key) (apikey.Key, error) {
@@ -557,13 +565,29 @@ func (a *App) previewTemplate(g *templates.Generator, tool templates.Tool) templ
 }
 
 func (a *App) templateGenerator() *templates.Generator {
-	g := templates.NewGenerator(a.GatewayHost(), "agent-router", a.routableModels())
+	g := templates.NewGenerator(a.GatewayHost(), "agent-router", a.routableModels()).
+		WithCatalogAliases(a.catalogAliases())
 	for _, key := range a.keys.List() {
 		if key.Enabled && key.Key != "" {
 			return g.WithAuthToken(key.Key)
 		}
 	}
 	return g
+}
+
+// catalogAliases maps a client model to its aliases. Aliases stay out of every
+// model list (that is what makes them aliases), but the Codex model catalog must
+// carry an entry for them too: a user who sets `model` to an alias would otherwise
+// fall back to Codex's 272k default window.
+func (a *App) catalogAliases() map[string][]string {
+	out := make(map[string][]string, 8)
+	for _, m := range a.proxy.EffectiveMappings() {
+		if len(m.Aliases) == 0 {
+			continue
+		}
+		out[m.ClientModel] = append(out[m.ClientModel], m.Aliases...)
+	}
+	return out
 }
 
 // routableModels flattens the proxy's effective mappings into the client
@@ -600,4 +624,7 @@ type Bootstrap struct {
 	APIKeys      []apikey.Key          `json:"apiKeys"`
 	ProxyRunning bool                  `json:"proxyRunning"`
 	Settings     settings.Settings     `json:"settings"`
+	// ChainModes maps a client model name to its chain starting rule. Absent
+	// means the default, "failover".
+	ChainModes map[string]string `json:"chainModes"`
 }

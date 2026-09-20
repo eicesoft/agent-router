@@ -155,6 +155,7 @@ export namespace main {
 	    apiKeys: apikey.Key[];
 	    proxyRunning: boolean;
 	    settings: settings.Settings;
+	    chainModes: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
 	        return new Bootstrap(source);
@@ -169,6 +170,7 @@ export namespace main {
 	        this.apiKeys = this.convertValues(source["apiKeys"], apikey.Key);
 	        this.proxyRunning = source["proxyRunning"];
 	        this.settings = this.convertValues(source["settings"], settings.Settings);
+	        this.chainModes = source["chainModes"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -779,12 +781,35 @@ export namespace usage {
 	        this.to = source["to"];
 	    }
 	}
+	export class RequestLogStats {
+	    requests: number;
+	    successes: number;
+	    inputTokens: number;
+	    outputTokens: number;
+	    cachedInputTokens: number;
+	    reasoningOutputTokens: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new RequestLogStats(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.requests = source["requests"];
+	        this.successes = source["successes"];
+	        this.inputTokens = source["inputTokens"];
+	        this.outputTokens = source["outputTokens"];
+	        this.cachedInputTokens = source["cachedInputTokens"];
+	        this.reasoningOutputTokens = source["reasoningOutputTokens"];
+	    }
+	}
 	export class RequestLogPage {
 	    items: RequestLog[];
 	    page: number;
 	    pageSize: number;
 	    total: number;
 	    totalPages: number;
+	    stats: RequestLogStats;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestLogPage(source);
@@ -797,6 +822,7 @@ export namespace usage {
 	        this.pageSize = source["pageSize"];
 	        this.total = source["total"];
 	        this.totalPages = source["totalPages"];
+	        this.stats = this.convertValues(source["stats"], RequestLogStats);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -817,6 +843,7 @@ export namespace usage {
 		    return a;
 		}
 	}
+	
 	export class Summary {
 	    requests: number;
 	    inputTokens: number;

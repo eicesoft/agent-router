@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Card,
@@ -52,13 +52,16 @@ import {
   getRequestLog,
   getUsageBreakdown,
   listRequestLogs,
+  listSkills,
   addProviderCredential,
   listToolTemplates,
+  listSkillLinks,
   localAPIKeyEnvStatus,
   renderToolTemplate,
   saveLocalAPIKey,
   saveModelMapping,
   saveProvider,
+  setChainMode,
   setProviderAPIKey,
   setProxyRunning,
   toggleLocalAPIKey,
@@ -67,10 +70,12 @@ import {
 } from "./lib/api";
 import type {
   Bootstrap,
+  ChainMode,
   EnvStatus,
   LocalAPIKey,
   ModelMapping,
   Provider,
+  RequestLog,
   RequestLogFilter,
   RequestLogPage,
   ToolPreview,
@@ -119,6 +124,9 @@ function TokenValue({
   );
 }
 const requestLogPageSize = 15;
+// 查询慢于此阈值才点亮 loading：命中覆盖索引后单页通常几十毫秒返回，
+// 立即显示遮罩只会造成一帧闪烁，反而像卡顿。
+const LOG_SLOW_MS = 180;
 const LOG_COLUMNS = [
   "状态",
   "密钥",
@@ -203,7 +211,13 @@ export default function App() {
   const playgroundReset = useRef<(() => void) | null>(null);
   const [playgroundHasContent, setPlaygroundHasContent] = useState(false);
   const [data, setData] = useState<Bootstrap | null>(null);
+  // Skills 页自取数据（文件系统扫描），这里只留一个用于侧栏的可用计数，
+  // 面板每次 reload 后回填，保证开关/删除后数字跟着变。
+  const [skillCount, setSkillCount] = useState(0);
+  // Agent 页自取模板列表，侧栏数字单独拉一次（只用到 installed 标志）。
+  const [agentCount, setAgentCount] = useState(0);
   const [requestLogs, setRequestLogs] = useState<RequestLogPage | null>(null);
+  const [logsLoading, setLogsLoading] = useState(false);
   const [logFilter, setLogFilter] = useState<RequestLogFilter>({
     token: "",
     model: "",
@@ -231,14 +245,72 @@ export default function App() {
     bootstrap().then(setData);
   }, []);
   useEffect(() => {
+    listSkills()
+      .then((s) => setSkillCount(s.skills.filter((x) => x.enabled).length))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    listToolTemplates()
+      .then((tools) => setAgentCount(tools.filter((t) => t.installed).length))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
     if (data) setProxyRunningState(data.proxyRunning);
   }, [data]);
   useEffect(() => {
     if (data) applyTheme(data.settings.theme);
   }, [data]);
+  // 每次查询自增序号：查询条件变化时旧请求可能后返回，只有最新一次的结果
+  // 允许落到状态里，否则面板会显示上一次筛选的数据。
+  const logQuerySeq = useRef(0);
+  const logSlowTimer = useRef<number | null>(null);
+  const loadRequestLogs = useCallback(
+    async (nextPage: number, nextFilter: RequestLogFilter) => {
+      const seq = ++logQuerySeq.current;
+      // 命中索引后这页通常几十毫秒就返回，立刻点亮遮罩只会闪一下。延迟到
+      // 阈值之后才显示，快查询全程无遮罩，慢查询（大库、宽日期范围）照样有反馈。
+      if (logSlowTimer.current !== null)
+        window.clearTimeout(logSlowTimer.current);
+      logSlowTimer.current = window.setTimeout(() => {
+        if (seq === logQuerySeq.current) setLogsLoading(true);
+      }, LOG_SLOW_MS);
+      try {
+        const result = await listRequestLogs(
+          nextPage,
+          requestLogPageSize,
+          nextFilter,
+        );
+        if (seq !== logQuerySeq.current) return;
+        setRequestLogs(result);
+      } catch (error) {
+        // 失败时保留上一次的结果，只解除遮罩；查询按钮仍可重试。
+        if (seq === logQuerySeq.current)
+          console.error("加载请求日志失败", error);
+      } finally {
+        // 被更新的一次查询取代时不要解锁，否则新查询的遮罩会被旧请求提前撤掉。
+        if (seq === logQuerySeq.current) {
+          if (logSlowTimer.current !== null) {
+            window.clearTimeout(logSlowTimer.current);
+            logSlowTimer.current = null;
+          }
+          setLogsLoading(false);
+        }
+      }
+    },
+    [],
+  );
+  useEffect(
+    () => () => {
+      if (logSlowTimer.current !== null)
+        window.clearTimeout(logSlowTimer.current);
+    },
+    [],
+  );
   useEffect(() => {
     if (page !== "logs") return;
-    listRequestLogs(1, requestLogPageSize, logFilter).then(setRequestLogs);
+    void loadRequestLogs(1, logFilter);
+    // 只在切到日志页时取数：筛选条件由「查询」按钮显式提交，不随输入实时触发。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -275,14 +347,18 @@ export default function App() {
       byRoute[`${m.providerId}\u0000${m.upstreamModel}`] = true;
     }
     const merged = [...mappings];
-    const seen = new Set(mappings.map((m) => m.clientModel));
     for (const auto of deriveAutoMappings(providers)) {
       if (byRoute[`${auto.providerId}\u0000${auto.upstreamModel}`]) continue;
-      if (seen.has(auto.clientModel)) continue;
       merged.push(auto);
-      seen.add(auto.clientModel);
     }
-    return merged.sort((a, b) => a.clientModel.localeCompare(b.clientModel));
+    // 与后端 effectiveMappings 同一套排序：同名的一条 failover 链按 ID 固定顺序，
+    // 所以列表显示的顺位就是请求实际尝试的顺位。ID 比较用裸字符串序，与 Go 的
+    // `<` 一致；localeCompare 对连字符与数字的处理不同，会让顺位与后端漂移。
+    return merged.sort(
+      (a, b) =>
+        a.clientModel.localeCompare(b.clientModel) ||
+        (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
   }, [data?.mappings, data?.providers]);
   if (!data) return <main className="loading">正在加载 Agent Router…</main>;
   const setProvider = async (id: string, enabled: boolean) => {
@@ -349,19 +425,25 @@ export default function App() {
     return saved;
   };
   const persistMapping = async (form: MappingFormState) => {
-    const saved = await saveModelMapping({
-      id: form.id || `mapping-${Date.now()}`,
-      clientModel: form.clientModel.trim() || form.id,
-      providerId: form.providerId,
-      upstreamModel: form.upstreamModel,
-      // 别名在抽屉里已裁掉空白；这里只去重并剔除与客户端模型名相同的项。
-      aliases: form.aliases.filter(
-        (name) => name && name !== (form.clientModel.trim() || form.id),
-      ),
-      // 编辑已有映射时保留其启停状态。
-      enabled:
-        data.mappings.find((item) => item.id === form.id)?.enabled ?? true,
-    });
+    let saved: ModelMapping;
+    try {
+      saved = await saveModelMapping({
+        id: form.id || `mapping-${Date.now()}`,
+        clientModel: form.clientModel.trim() || form.id,
+        providerId: form.providerId,
+        upstreamModel: form.upstreamModel,
+        // 别名在抽屉里已裁掉空白；这里只去重并剔除与客户端模型名相同的项。
+        aliases: form.aliases.filter(
+          (name) => name && name !== (form.clientModel.trim() || form.id),
+        ),
+        // 编辑已有映射时保留其启停状态。
+        enabled:
+          data.mappings.find((item) => item.id === form.id)?.enabled ?? true,
+      });
+    } catch (err) {
+      // 后端会拒绝重复路由；抛回去让抽屉显示原因，否则用户只看到「点了没反应」。
+      throw new Error(err instanceof Error ? err.message : String(err));
+    }
     setData({
       ...data,
       mappings: [
@@ -369,6 +451,24 @@ export default function App() {
         saved,
       ].sort((a, b) => a.clientModel.localeCompare(b.clientModel)),
     });
+  };
+  // 链策略只影响「先打哪家」，不改变链的成员，所以本地只更新 chainModes 映射，
+  // 不重排 mappings。写失败时把旧值放回去，避免 UI 显示已生效而网关没变。
+  const setMappingChainMode = async (clientModel: string, mode: ChainMode) => {
+    const previous = data.chainModes[clientModel] ?? "failover";
+    const next = { ...data.chainModes };
+    if (mode === "failover") delete next[clientModel];
+    else next[clientModel] = mode;
+    setData({ ...data, chainModes: next });
+    try {
+      await setChainMode(clientModel, mode);
+    } catch (err) {
+      const reverted = { ...next };
+      if (previous === "failover") delete reverted[clientModel];
+      else reverted[clientModel] = previous;
+      setData({ ...data, chainModes: reverted });
+      throw err;
+    }
   };
   const persistProvider = async (form: ProviderFormState) => {
     const id =
@@ -434,6 +534,8 @@ export default function App() {
         providerCount={data.providers.filter((p) => p.enabled).length}
         keyCount={data.apiKeys.filter((k) => k.enabled).length}
         mappingCount={ensuredMappings.filter((m) => m.enabled).length}
+        agentCount={agentCount}
+        skillCount={skillCount}
         proxyRunning={proxyRunning}
         width={sidebarWidth}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -527,6 +629,8 @@ export default function App() {
               providers={data.providers}
               mappings={ensuredMappings}
               onEdit={(m) => setMappingDraft({ mapping: m })}
+              chainModes={data.chainModes}
+              onChainModeChange={setMappingChainMode}
             />
           ) : page === "keys" ? (
             <LocalKeys
@@ -536,7 +640,11 @@ export default function App() {
               onDelete={(key) => setKeyToDelete(key)}
             />
           ) : page === "skills" ? (
-            <SkillsPanel />
+            <SkillsPanel
+              onSummary={(s) =>
+                setSkillCount(s.skills.filter((x) => x.enabled).length)
+              }
+            />
           ) : page === "playground" ? (
             <Playground
               onRegisterReset={(reset) => {
@@ -551,16 +659,13 @@ export default function App() {
           ) : page === "logs" ? (
             <RequestLogs
               logs={requestLogs}
+              loading={logsLoading}
               tokens={data.apiKeys}
               models={ensuredMappings}
               providers={data.providers}
               filter={logFilter}
               onFilterChange={setLogFilter}
-              onSearch={() => {
-                void listRequestLogs(1, requestLogPageSize, logFilter).then(
-                  setRequestLogs,
-                );
-              }}
+              onSearch={() => void loadRequestLogs(1, logFilter)}
               onReset={() => {
                 const empty = {
                   token: "",
@@ -571,17 +676,11 @@ export default function App() {
                   to: "",
                 };
                 setLogFilter(empty);
-                void listRequestLogs(1, requestLogPageSize, empty).then(
-                  setRequestLogs,
-                );
+                void loadRequestLogs(1, empty);
               }}
-              onPageChange={(nextPage) => {
-                void listRequestLogs(
-                  nextPage,
-                  requestLogPageSize,
-                  logFilter,
-                ).then(setRequestLogs);
-              }}
+              onPageChange={(nextPage) =>
+                void loadRequestLogs(nextPage, logFilter)
+              }
             />
           ) : (
             <AgentTemplates />
@@ -730,6 +829,7 @@ function formatLatency(latencyMs: number) {
 
 function RequestLogs({
   logs,
+  loading,
   tokens,
   models,
   providers,
@@ -740,6 +840,7 @@ function RequestLogs({
   onPageChange,
 }: {
   logs: RequestLogPage | null;
+  loading: boolean;
   tokens: LocalAPIKey[];
   models: ModelMapping[];
   providers: Provider[];
@@ -783,6 +884,61 @@ function RequestLogs({
     model: string;
     kind: "输入" | "输出";
   } | null>(null);
+  // 详情弹窗先以列表里的 50 字符预览打开，再异步换成完整正文；这段时间要有
+  // 反馈，否则大 body（单条可达数百 KB）拉取期间看起来像内容被截断了。
+  const [payloadLoading, setPayloadLoading] = useState(false);
+  // 详情也按序号守卫：连续点两行的眼睛时，先返回的旧请求不能覆盖新弹窗。
+  const payloadSeq = useRef(0);
+  const payloadSlowTimer = useRef<number | null>(null);
+  const openPayload = (
+    id: number,
+    initial: string,
+    model: string,
+    kind: "输入" | "输出",
+  ) => {
+    const seq = ++payloadSeq.current;
+    setSelectedPayload({ content: initial, model, kind });
+    // 与列表查询同一套延迟门帘：加载条插在正文之上，快查询时立刻显示会造成
+    // 一次布局跳动，慢查询（数百 KB body）才需要这条提示。
+    if (payloadSlowTimer.current !== null)
+      window.clearTimeout(payloadSlowTimer.current);
+    payloadSlowTimer.current = window.setTimeout(() => {
+      if (seq === payloadSeq.current) setPayloadLoading(true);
+    }, LOG_SLOW_MS);
+    void getRequestLog(id)
+      .then((full: RequestLog) => {
+        if (seq !== payloadSeq.current) return;
+        setSelectedPayload({
+          content:
+            kind === "输入"
+              ? full.requestBody
+              : full.responseBody || full.errorMessage,
+          model: full.clientModel,
+          kind,
+        });
+      })
+      .catch((error) => {
+        // 预留在弹窗里的截断预览仍然可读，因此只解除 loading 不关闭弹窗。
+        if (seq === payloadSeq.current) {
+          setSelectedPayload({ content: initial, model, kind });
+          console.error("加载日志详情失败", error);
+        }
+      })
+      .finally(() => {
+        if (seq !== payloadSeq.current) return;
+        if (payloadSlowTimer.current !== null) {
+          window.clearTimeout(payloadSlowTimer.current);
+          payloadSlowTimer.current = null;
+        }
+        setPayloadLoading(false);
+      });
+  };
+  // 请求日志按 client_model 过滤，同名多提供商时逐条映射会生成多个相同 value 的
+  // 选项（ListBox 的 key 也重复）。名字背后是哪家服务的是日志行的事，筛选只认名字，
+  // 所以取链首那条显示提供商即可。
+  const filterModels = [
+    ...new Map(models.map((m) => [m.clientModel, m])).values(),
+  ];
   const [copied, setCopied] = useState(false);
   const headRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -791,14 +947,86 @@ function RequestLogs({
     const timer = setTimeout(() => setCopied(false), 1400);
     return () => clearTimeout(timer);
   }, [copied]);
+  // 组件卸载（切走日志页）时清掉在途的详情门帘，避免定时器在已卸载组件上触发。
+  useEffect(
+    () => () => {
+      if (payloadSlowTimer.current !== null)
+        window.clearTimeout(payloadSlowTimer.current);
+    },
+    [],
+  );
   const copyPayload = async () => {
     if (!selectedPayload) return;
     if (await copyToClipboard(selectedPayload.content)) setCopied(true);
   };
 
-  if (!logs) return <div className="loading">正在加载请求日志…</div>;
+  // 首次进入页面还没有任何结果可显示：整块用加载态占位，而不是先闪一屏空统计。
+  if (!logs)
+    return (
+      <div
+        className="loading request-log-loading"
+        role="status"
+        aria-live="polite"
+      >
+        <Loader2 size={16} className="spin" aria-hidden="true" />
+        正在加载请求日志…
+      </div>
+    );
+  // 统计口径跟随当前查询条件：后端把命中过滤的行聚合成 stats，前端只做展示。
+  const stats = logs.stats;
+  const successRate =
+    stats.requests > 0 ? (stats.successes / stats.requests) * 100 : 0;
+  const cacheRate =
+    stats.inputTokens > 0
+      ? (stats.cachedInputTokens / stats.inputTokens) * 100
+      : 0;
   return (
-    <section className="request-log-panel">
+    <section className="request-log-panel" aria-busy={loading}>
+      <div
+        className={
+          loading ? "request-log-stats is-loading" : "request-log-stats"
+        }
+      >
+        <div className="request-log-stat">
+          <div className="request-log-stat-head">
+            <span>输入 Tokens</span>
+            <TokenValue value={stats.inputTokens} />
+          </div>
+          <small>
+            缓存 <TokenValue value={stats.cachedInputTokens} as="span" /> ·
+            缓存率 {cacheRate.toFixed(1)}%
+          </small>
+        </div>
+        <div className="request-log-stat">
+          <div className="request-log-stat-head">
+            <span>输出 Tokens</span>
+            <TokenValue value={stats.outputTokens} />
+          </div>
+          <small>
+            推理 <TokenValue value={stats.reasoningOutputTokens} as="span" />
+          </small>
+        </div>
+        <div className="request-log-stat">
+          <div className="request-log-stat-head">
+            <span>总 Tokens</span>
+            <TokenValue value={stats.inputTokens + stats.outputTokens} />
+          </div>
+          <small>
+            {num.format(stats.cachedInputTokens)} 缓存 / 输入{" "}
+            {num.format(stats.inputTokens)}
+          </small>
+        </div>
+        <div className="request-log-stat">
+          <div className="request-log-stat-head">
+            <span>请求数</span>
+            <strong>{num.format(stats.requests)}</strong>
+          </div>
+          <small>
+            成功 {num.format(stats.successes)} · 成功率 {successRate.toFixed(1)}
+            %
+          </small>
+        </div>
+      </div>
       <div className="request-log-filters">
         <FieldSelect
           label="Token"
@@ -817,7 +1045,7 @@ function RequestLogs({
           value={filter.model || null}
           renderValue={(model) => model}
           onChange={(key) => onFilterChange({ ...filter, model: key ?? "" })}
-          options={models.map((m) => ({
+          options={filterModels.map((m) => ({
             value: m.clientModel,
             label: (
               <span className="model-option">
@@ -859,14 +1087,35 @@ function RequestLogs({
           to={filter.to}
           onChange={(from, to) => onFilterChange({ ...filter, from, to })}
         />
-        <Button size="sm" variant="primary" onPress={onSearch}>
+        <Button
+          size="sm"
+          variant="primary"
+          onPress={onSearch}
+          isDisabled={loading}
+        >
+          {loading ? (
+            <Loader2 size={14} className="spin" aria-hidden="true" />
+          ) : null}
           查询
         </Button>
-        <Button size="sm" variant="secondary" onPress={onReset}>
+        <Button
+          size="sm"
+          variant="secondary"
+          onPress={onReset}
+          isDisabled={loading}
+        >
           重置
         </Button>
       </div>
-      <div className="request-log-card">
+      <div className="request-log-card" aria-busy={loading}>
+        {loading && (
+          // 面板已有上一次的结果时不换成空态，而是盖一层遮罩：旧数据仍可滚动
+          // 查阅（遮罩 pointer-events: none），遮罩只表达「这次查询还在进行」。
+          <div className="request-log-overlay" role="status" aria-live="polite">
+            <Loader2 size={16} className="spin" aria-hidden="true" />
+            正在查询…
+          </div>
+        )}
         <div className="request-log-head" ref={headRef}>
           <div className="request-log-table-wrap" style={{ width: tableWidth }}>
             <table className="request-log-table">
@@ -1027,20 +1276,14 @@ function RequestLogs({
                           variant="ghost"
                           className="request-log-input-action"
                           aria-label="查看完整输入"
-                          onPress={() => {
-                            setSelectedPayload({
-                              content: log.requestBody,
-                              model: log.clientModel,
-                              kind: "输入",
-                            });
-                            void getRequestLog(log.id).then((full) =>
-                              setSelectedPayload({
-                                content: full.requestBody,
-                                model: full.clientModel,
-                                kind: "输入",
-                              }),
-                            );
-                          }}
+                          onPress={() =>
+                            openPayload(
+                              log.id,
+                              log.requestBody,
+                              log.clientModel,
+                              "输入",
+                            )
+                          }
                         >
                           <Eye size={15} />
                         </Button>
@@ -1057,20 +1300,14 @@ function RequestLogs({
                           variant="ghost"
                           className="request-log-output-action"
                           aria-label="查看完整输出"
-                          onPress={() => {
-                            setSelectedPayload({
-                              content: log.responseBody || log.errorMessage,
-                              model: log.clientModel,
-                              kind: "输出",
-                            });
-                            void getRequestLog(log.id).then((full) =>
-                              setSelectedPayload({
-                                content: full.responseBody || full.errorMessage,
-                                model: full.clientModel,
-                                kind: "输出",
-                              }),
-                            );
-                          }}
+                          onPress={() =>
+                            openPayload(
+                              log.id,
+                              log.responseBody || log.errorMessage,
+                              log.clientModel,
+                              "输出",
+                            )
+                          }
                         >
                           <Eye size={15} />
                         </Button>
@@ -1126,7 +1363,7 @@ function RequestLogs({
             <Pagination.Content>
               <Pagination.Item>
                 <Pagination.Previous
-                  isDisabled={logs.page <= 1}
+                  isDisabled={loading || logs.page <= 1}
                   onPress={() => onPageChange(logs.page - 1)}
                 >
                   <Pagination.PreviousIcon />
@@ -1141,6 +1378,7 @@ function RequestLogs({
                   <Pagination.Item key={n}>
                     <Pagination.Link
                       isActive={n === logs.page}
+                      isDisabled={loading}
                       onPress={() => onPageChange(n)}
                     >
                       {n}
@@ -1150,7 +1388,7 @@ function RequestLogs({
               )}
               <Pagination.Item>
                 <Pagination.Next
-                  isDisabled={logs.page >= logs.totalPages}
+                  isDisabled={loading || logs.page >= logs.totalPages}
                   onPress={() => onPageChange(logs.page + 1)}
                 >
                   <Pagination.NextIcon />
@@ -1164,6 +1402,13 @@ function RequestLogs({
         isOpen={selectedPayload !== null}
         onOpenChange={(isOpen) => {
           if (!isOpen) {
+            // 作废在途的详情请求：否则它返回后会把已关闭的弹窗重新打开。
+            payloadSeq.current += 1;
+            if (payloadSlowTimer.current !== null) {
+              window.clearTimeout(payloadSlowTimer.current);
+              payloadSlowTimer.current = null;
+            }
+            setPayloadLoading(false);
             setSelectedPayload(null);
             setCopied(false);
           }
@@ -1179,6 +1424,16 @@ function RequestLogs({
                 <Modal.CloseTrigger />
               </Modal.Header>
               <Modal.Body>
+                {payloadLoading ? (
+                  <div
+                    className="request-log-detail-loading"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <Loader2 size={16} className="spin" aria-hidden="true" />
+                    正在加载完整内容…
+                  </div>
+                ) : null}
                 <pre className="request-log-json-view">
                   {formatJSON(selectedPayload?.content ?? "")}
                 </pre>
@@ -1546,17 +1801,19 @@ function Overview({
               <div className="metric-icon">
                 <Icon size={19} />
               </div>
-              <span>{label}</span>
-              {tooltip ? (
-                <Tooltip>
-                  <Tooltip.Trigger>
-                    <strong className="metric-token-value">{value}</strong>
-                  </Tooltip.Trigger>
-                  <Tooltip.Content>{tooltip}</Tooltip.Content>
-                </Tooltip>
-              ) : (
-                <strong>{value}</strong>
-              )}
+              <div className="metric-head">
+                <span>{label}</span>
+                {tooltip ? (
+                  <Tooltip>
+                    <Tooltip.Trigger>
+                      <strong className="metric-token-value">{value}</strong>
+                    </Tooltip.Trigger>
+                    <Tooltip.Content>{tooltip}</Tooltip.Content>
+                  </Tooltip>
+                ) : (
+                  <strong>{value}</strong>
+                )}
+              </div>
               <small>{sub}</small>
             </Card.Content>
           </Card>
@@ -1803,12 +2060,17 @@ function Mappings({
   providers,
   mappings,
   onEdit,
+  chainModes,
+  onChainModeChange,
 }: {
   providers: Provider[];
   mappings: ModelMapping[];
   onEdit: (mapping: ModelMapping) => void;
+  chainModes: Record<string, ChainMode>;
+  onChainModeChange: (clientModel: string, mode: ChainMode) => Promise<void>;
 }) {
   const [copiedName, setCopiedName] = useState<string | null>(null);
+  const [chainError, setChainError] = useState<string | null>(null);
   useEffect(() => {
     if (!copiedName) return;
     const timer = setTimeout(() => setCopiedName(null), 1400);
@@ -1838,12 +2100,48 @@ function Mappings({
         },
       })),
     }));
+  // 同名多提供商时，卡片要标出自己在 failover 链里的顺位，否则用户看不出
+  // 两家提供商的同名模型是什么关系。顺位取自 mappings 的顺序（已按后端同一规则排）。
+  const chainRank = new Map<string, { index: number; total: number }>();
+  const chains = new Map<string, string[]>();
+  for (const m of mappings) {
+    if (!m.enabled) continue;
+    const key = m.clientModel;
+    chains.set(key, [...(chains.get(key) ?? []), m.id]);
+  }
+  for (const ids of chains.values()) {
+    if (ids.length < 2) continue;
+    ids.forEach((id, index) =>
+      chainRank.set(id, { index: index + 1, total: ids.length }),
+    );
+  }
+  const rankOf = (mapping: ModelMapping) => chainRank.get(mapping.id);
+  // 链策略挂在链首卡片上：它描述整条链的起点规则，逐张卡片各放一个会让人以为
+  // 每家可以单独设。非链首卡片只显示顺位。
+  const chainModeOf = (mapping: ModelMapping): ChainMode =>
+    chainModes[mapping.clientModel] ?? "failover";
+  // 写链策略失败时给个可见的提示，否则下拉框会悄悄弹回原值。
+  const changeChainMode = (clientModel: string, mode: ChainMode) => {
+    onChainModeChange(clientModel, mode).catch((err) => {
+      setChainError(err instanceof Error ? err.message : String(err));
+    });
+  };
+  useEffect(() => {
+    if (!chainError) return;
+    const timer = setTimeout(() => setChainError(null), 4000);
+    return () => clearTimeout(timer);
+  }, [chainError]);
   return (
     <section className="list-panel">
       {copiedName && (
         <span className="route-toast" role="status">
           已复制 {copiedName}
         </span>
+      )}
+      {chainError && (
+        <p className="mapping-save-error" role="alert">
+          {chainError}
+        </p>
       )}
       {groups.length > 0 ? (
         groups.map(({ provider, routes }) => (
@@ -1889,6 +2187,37 @@ function Mappings({
                     <Link size={13} />
                     <code>{model}</code>
                   </div>
+                  {/* 同名链顺位：只有多家提供商共用这个名字时才显示。 */}
+                  {(() => {
+                    const rank = rankOf(mapping);
+                    if (!rank) return null;
+                    return (
+                      <div className="route-chain-row">
+                        <span
+                          className="route-chain-rank"
+                          title={`同名路由 ${rank.index}/${rank.total}：请求按此顺序尝试，前一家限流或报错时自动转下一家`}
+                        >
+                          同名 {rank.index}/{rank.total}
+                        </span>
+                        {rank.index === 1 && (
+                          <select
+                            className="route-chain-mode"
+                            aria-label={`${mapping.clientModel} 的调度策略`}
+                            value={chainModeOf(mapping)}
+                            onChange={(event) =>
+                              changeChainMode(
+                                mapping.clientModel,
+                                event.target.value as ChainMode,
+                              )
+                            }
+                          >
+                            <option value="failover">故障转移</option>
+                            <option value="round_robin">轮转</option>
+                          </select>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {/* 别名是另一条能命中这张卡片的客户端模型名，直接列出来，
                       否则用户只能进抽屉才知道自己配过哪些名字。 */}
                   {mapping.aliases.length > 0 && (
@@ -2199,6 +2528,9 @@ function AgentTemplates() {
   const [previews, setPreviews] = useState<ToolPreview[] | null>(null);
   const [configuringId, setConfiguringId] = useState<string | null>(null);
   const [skillsToolId, setSkillsToolId] = useState<string | null>(null);
+  // toolId -> 该 CLI 的 skills 目录里已有的条目数（含外部条目）。挂在卡片
+  // 的 Skills 按钮上，链接弹窗开关时重算。
+  const [skillCounts, setSkillCounts] = useState<Record<string, number>>({});
   const [configTab, setConfigTab] = useState("models");
   const [writingId, setWritingId] = useState<string | null>(null);
   const [written, setWritten] = useState<string | null>(null);
@@ -2214,6 +2546,32 @@ function AgentTemplates() {
   useEffect(() => {
     listToolTemplates().then(setPreviews);
   }, []);
+  const skillsReady = previews !== null;
+  useEffect(() => {
+    if (!skillsReady) return;
+    let stale = false;
+    Promise.all(
+      (previews ?? [])
+        .filter((t) => t.skillsPath)
+        .map(async (t) => {
+          try {
+            const d = await listSkillLinks(t.id);
+            return [
+              t.id,
+              d.links.filter((l) => l.state !== "missing").length,
+            ] as const;
+          } catch {
+            return [t.id, 0] as const;
+          }
+        }),
+    ).then((entries) => {
+      if (!stale) setSkillCounts(Object.fromEntries(entries));
+    });
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skillsReady, skillsToolId]);
   useEffect(() => {
     if (!configuringId) return;
     document.documentElement.classList.add("agent-config-open");
@@ -2388,6 +2746,9 @@ function AgentTemplates() {
                 >
                   <FolderSymlink size={14} />
                   Skills
+                  {skillCounts[tool.id] > 0 && (
+                    <span className="nav-count">{skillCounts[tool.id]}</span>
+                  )}
                 </Button>
               )}
             </div>

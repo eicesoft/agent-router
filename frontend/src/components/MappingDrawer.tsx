@@ -51,6 +51,8 @@ export function MappingDrawer({
   // 别名的自由输入框内容：回车或点「添加」才落进 form.aliases，避免每敲一个
   // 字符就生成一个半截别名。
   const [aliasDraft, setAliasDraft] = useState("");
+  // 保存失败的原因（例如后端拒绝重复路由）。不显示就只是「点了没反应」。
+  const [saveError, setSaveError] = useState<string | null>(null);
   // 启用的提供商及其配置激活的模型，作为上游候选；正在编辑的提供商即使停用也保留。
   const candidates = useMemo(() => {
     const list = providers
@@ -65,6 +67,7 @@ export function MappingDrawer({
 
   useEffect(() => {
     if (!isOpen) return;
+    setSaveError(null);
     const preferred = initial?.providerId ?? mapping?.providerId ?? "";
     setForm({
       id: mapping?.id ?? "",
@@ -106,10 +109,15 @@ export function MappingDrawer({
   };
 
   const submit = async () => {
-    await onSave({
-      ...form,
-      clientModel: form.clientModel.trim() || impliedName(),
-    });
+    try {
+      await onSave({
+        ...form,
+        clientModel: form.clientModel.trim() || impliedName(),
+      });
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+      return;
+    }
     onClose();
   };
 
@@ -189,8 +197,15 @@ export function MappingDrawer({
             默认为<b>提供商模型前缀 / 模型名称</b>
             （未设置前缀时用提供商名称），例如 <code>{impliedName()}</code>；
             可重设置为任意名称。
+            多家提供商可以用同一个名称：请求按列表顺序依次尝试，前一家限流或报错就
+            自动转下一家。
           </p>
           <Separator className="my-1" />
+          {saveError && (
+            <p className="mapping-save-error" role="alert">
+              {saveError}
+            </p>
+          )}
           <section
             className="mapping-alias-field"
             aria-labelledby="mapping-alias-heading"
@@ -248,7 +263,8 @@ export function MappingDrawer({
             <p className="provider-form-note">
               别名与客户端模型名等价：客户端用它发起请求会命中同一条映射。
               别名只用于命中路由，不会出现在 <code>/v1/models</code>
-              与生成的 CLI 配置里，也不能与其它映射已用的名字重复。
+              与生成的 CLI 配置里。别名可以与其它提供商的映射重名（同样构成
+              failover 链），但不能与同一提供商的同一上游模型重复。
             </p>
           </section>
         </div>

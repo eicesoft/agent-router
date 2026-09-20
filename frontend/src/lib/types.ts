@@ -156,6 +156,15 @@ export type RequestLogPage = {
   pageSize: number;
   total: number;
   totalPages: number;
+  stats: RequestLogStats;
+};
+export type RequestLogStats = {
+  requests: number;
+  successes: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningOutputTokens: number;
 };
 export type RequestLogFilter = {
   token: string;
@@ -173,7 +182,13 @@ export type Bootstrap = {
   apiKeys: LocalAPIKey[];
   proxyRunning: boolean;
   settings: AppSettings;
+  // 同名链的起点策略，按客户端模型名索引。缺省即 "failover"。
+  chainModes: Record<string, ChainMode>;
 };
+
+// failover：永远从链首开始，健康就短路。round_robin：每次请求把起点向后挪
+// 一家，让链上各家分摊流量；起点之后仍是 failover。
+export type ChainMode = "failover" | "round_robin";
 export type AppSettings = {
   host: string;
   port: number;

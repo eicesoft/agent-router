@@ -309,19 +309,56 @@ export function Playground({
 
   // 模型按提供商分组：选项只显示映射后的上游模型名，映射前的客户端模型名放
   // 在悬停提示里。
-  const modelGroups = providers
-    .map((provider) => ({
+  //
+  // 同名多提供商是一条链：选项的 value 必须是客户端模型名本身（网关只认这个名字，
+  // 由链策略决定先打哪家），所以它只能出现一次——重复 value 会让下拉选不中。它也
+  // 不属于任何单家提供商，因此单独列一组并标出链上有哪几家，否则用户会以为这个名字
+  // 只归链首那家（以前就会这样，点下去永远只打链首）。
+  const chainMembers = new Map<string, ModelMapping[]>();
+  for (const m of models) {
+    chainMembers.set(m.clientModel, [
+      ...(chainMembers.get(m.clientModel) ?? []),
+      m,
+    ]);
+  }
+  const chains = [...chainMembers.entries()].filter(
+    ([, list]) => list.length > 1,
+  );
+  const chainedNames = new Set(chains.map(([name]) => name));
+  const providerName = (id: string) =>
+    providers.find((p) => p.id === id)?.name ?? id;
+  const modelGroups = [
+    ...providers.map((provider) => ({
       title: provider.name,
       options: models
-        .filter((m) => m.providerId === provider.id)
+        .filter(
+          (m) =>
+            m.providerId === provider.id && !chainedNames.has(m.clientModel),
+        )
         .map((m) => ({
           value: m.clientModel,
           label: m.upstreamModel,
           tooltip: `客户端模型：${m.clientModel}`,
         }))
         .sort((a, b) => a.label.localeCompare(b.label, "en")),
-    }))
-    .filter((group) => group.options.length > 0);
+    })),
+    ...(chains.length > 0
+      ? [
+          {
+            title: "同名链（多提供商）",
+            options: chains
+              .map(([name, list]) => ({
+                value: name,
+                label: name,
+                tooltip: `同名链 ${list.length} 家：${list
+                  .map((m) => providerName(m.providerId))
+                  .join("、")}`,
+              }))
+              .sort((a, b) => a.value.localeCompare(b.value, "en")),
+          },
+        ]
+      : []),
+  ].filter((group) => group.options.length > 0);
 
   const send = async () => {
     const question = input.trim();
@@ -470,8 +507,12 @@ export function Playground({
                   onChange={setModel}
                   popoverClassName="request-log-select-popover"
                   renderValue={(value) =>
-                    models.find((m) => m.clientModel === value)
-                      ?.upstreamModel ?? value
+                    // 同名链没有单一上游模型名（各家不同），直接显示客户端名，
+                    // 否则会只显示链首那家的上游名，误导成「只打这一家」。
+                    chainedNames.has(value)
+                      ? value
+                      : (models.find((m) => m.clientModel === value)
+                          ?.upstreamModel ?? value)
                   }
                   groups={modelGroups}
                 />

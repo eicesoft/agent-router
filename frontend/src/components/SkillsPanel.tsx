@@ -22,7 +22,11 @@ import type { Skill, SkillDetail, SkillSummary } from "../lib/types";
 
 // Skills 管理页。数据在挂载时自取（文件系统扫描无缓存，每次进入都刷新），
 // 不走 App.tsx 的 Bootstrap 通道。
-export function SkillsPanel() {
+export function SkillsPanel({
+  onSummary,
+}: {
+  onSummary?: (summary: SkillSummary) => void;
+}) {
   const [summary, setSummary] = useState<SkillSummary>({
     roots: [],
     skills: [],
@@ -55,7 +59,10 @@ export function SkillsPanel() {
 
   const reload = () => {
     listSkills()
-      .then(setSummary)
+      .then((s) => {
+        setSummary(s);
+        onSummary?.(s);
+      })
       .then(() => setError(""))
       .catch((e) => setError(String(e)));
   };

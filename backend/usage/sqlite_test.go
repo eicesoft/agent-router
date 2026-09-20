@@ -1,7 +1,9 @@
 package usage
 
 import (
+	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"agent-router/backend/storage"
@@ -59,6 +61,36 @@ func TestListRequestLogsFiltersSavedNames(t *testing.T) {
 	}
 }
 
+// 统计口径必须跟随过滤条件，否则日志页的缓存率会把没命中的历史请求算进去。
+func TestListRequestLogsStatsFollowFilter(t *testing.T) {
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "agent-router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tracker := NewSQLiteTracker(db)
+	for _, event := range []Event{
+		{ProviderID: "openai", ClientModel: "chat", InputTokens: 100, OutputTokens: 10, CachedInputTokens: 80, Success: true},
+		{ProviderID: "openai", ClientModel: "chat", InputTokens: 50, OutputTokens: 5, Success: false},
+		{ProviderID: "deepseek", ClientModel: "reasoner", InputTokens: 7, OutputTokens: 3, Success: true},
+	} {
+		if err := tracker.Record(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := tracker.ListRequestLogs(1, 20, RequestLogFilter{Provider: "openai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats := page.Stats
+	if stats.Requests != 2 || stats.Successes != 1 || stats.InputTokens != 150 || stats.OutputTokens != 15 || stats.CachedInputTokens != 80 {
+		t.Fatalf("unexpected filtered stats: %+v", stats)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("items should still be the filtered page: %+v", page.Items)
+	}
+}
+
 func TestUsageByKeyAndBreakdown(t *testing.T) {
 	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "agent-router.db"))
 	if err != nil {
@@ -90,6 +122,57 @@ func TestUsageByKeyAndBreakdown(t *testing.T) {
 	if len(byProvider) != 2 || byProvider[0].Key != "openai" || byProvider[0].InputTokens != 11 {
 		t.Fatalf("unexpected provider stats: %+v", byProvider)
 	}
+}
+
+// 使用情况页的四条聚合都跑在 request_logs 这张带大体积请求/响应体的表上。
+// 一旦查询计划退化成裸扫全表，SQLite 会顺序读取每一页（含 body 溢出页），
+// 生产库里就是「每次打开面板都卡几百毫秒并拉起磁盘 IO」。
+func TestUsageBreakdownAvoidsFullTableScan(t *testing.T) {
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "agent-router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tracker := NewSQLiteTracker(db)
+	if err := tracker.Record(Event{TokenID: "key-a", TokenName: "甲", ProviderID: "openai", ClientModel: "chat", CredentialID: "cred-1", CredentialName: "主", CredentialMask: "ss****fg", Success: true, RequestBody: strings.Repeat("x", 4096)}); err != nil {
+		t.Fatal(err)
+	}
+	for name, query := range map[string]string{
+		"keys":        usageByKeyQuery,
+		"credentials": usageByCredentialQuery,
+		"providers":   usageByDimensionQuery("provider_id"),
+		"models":      usageByDimensionQuery("model"),
+	} {
+		if plan := explainPlan(t, db, query); !strings.Contains(plan, "COVERING INDEX") {
+			t.Errorf("%s aggregation does not use a covering index: %s", name, plan)
+		} else {
+			t.Logf("%s: %s", name, strings.TrimSpace(plan))
+		}
+	}
+}
+
+// explainPlan renders SQLite's plan for a query as one detail-per-line text.
+func explainPlan(t *testing.T, db *sql.DB, query string) string {
+	t.Helper()
+	rows, err := db.Query("EXPLAIN QUERY PLAN " + query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan.WriteString(detail)
+		plan.WriteString("\n")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return plan.String()
 }
 
 func TestListRequestLogsFiltersStatus(t *testing.T) {

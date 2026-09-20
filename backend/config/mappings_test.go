@@ -76,9 +76,9 @@ func TestResolveHonorsAliases(t *testing.T) {
 	}
 }
 
-// 两个映射应答同一个名字时 Resolve 会按 map 遍历顺序任选其一，等于悄悄偷走
-// 另一个映射的流量，因此在保存时就拒绝。
-func TestSaveRejectsModelNameCollisions(t *testing.T) {
+// 同一个客户端模型名可以挂多家提供商（按顺序 failover），但同一条「名字 → 提供商/上游
+// 模型」路由不能重复：重复只会让 failover 把同一个请求发两遍、付两次钱。
+func TestSameNameAcrossProvidersIsAllowed(t *testing.T) {
 	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -88,25 +88,46 @@ func TestSaveRejectsModelNameCollisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Save(ModelMapping{ID: "first", ClientModel: "model-a", ProviderID: "p", UpstreamModel: "up-a", Aliases: []string{"shortcut"}, Enabled: true}); err != nil {
+	// 空库会播种一条默认映射（default-gpt：openai/gpt-4.1），它正好与本用例的第一条
+	// 构成重复路由，先清掉。
+	if err := store.DeleteByProvider("openai"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Save(ModelMapping{ID: "second", ClientModel: "model-b", ProviderID: "p", UpstreamModel: "up-b", Aliases: []string{"shortcut"}, Enabled: true}); err == nil {
-		t.Fatal("duplicate alias across mappings was accepted")
+	for _, mapping := range []ModelMapping{
+		{ID: "first", ClientModel: "gpt-4.1", ProviderID: "openai", UpstreamModel: "gpt-4.1", Aliases: []string{"shortcut"}, Enabled: true},
+		{ID: "second", ClientModel: "gpt-4.1", ProviderID: "azure", UpstreamModel: "gpt-4.1-deployment", Enabled: true},
+	} {
+		if _, err := store.Save(mapping); err != nil {
+			t.Fatalf("same name on a different provider was rejected: %v", err)
+		}
 	}
-	if _, err := store.Save(ModelMapping{ID: "second", ClientModel: "model-b", ProviderID: "p", UpstreamModel: "up-b", Aliases: []string{"model-a"}, Enabled: true}); err == nil {
-		t.Fatal("alias colliding with another mapping's client model was accepted")
+	// 别名也算命中：它同样构成一条链。
+	if _, err := store.Save(ModelMapping{ID: "third", ClientModel: "other", ProviderID: "google", UpstreamModel: "gpt-4.1", Aliases: []string{"shortcut"}, Enabled: true}); err != nil {
+		t.Fatalf("alias shared with another provider's route was rejected: %v", err)
 	}
-	if _, err := store.Save(ModelMapping{ID: "second", ClientModel: "model-a", ProviderID: "p", UpstreamModel: "up-b", Enabled: true}); err == nil {
-		t.Fatal("duplicate client model was accepted")
+
+	// 完全相同的路由（同提供商 + 同上游模型 + 同名字）仍然拒绝。
+	if _, err := store.Save(ModelMapping{ID: "dupe", ClientModel: "gpt-4.1", ProviderID: "openai", UpstreamModel: "gpt-4.1", Enabled: true}); err == nil {
+		t.Fatal("duplicate route on the same provider was accepted")
 	}
-	// 重新保存自己不算冲突。
-	if _, err := store.Save(ModelMapping{ID: "first", ClientModel: "model-a", ProviderID: "p", UpstreamModel: "up-a", Aliases: []string{"shortcut", "extra"}, Enabled: true}); err != nil {
+	// 重新保存自己不算重复。
+	if _, err := store.Save(ModelMapping{ID: "first", ClientModel: "gpt-4.1", ProviderID: "openai", UpstreamModel: "gpt-4.1", Aliases: []string{"shortcut", "extra"}, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	saved, ok := store.Resolve("extra")
-	if !ok || saved.ID != "first" {
-		t.Fatalf("re-saved mapping lost its alias: %#v ok=%v", saved, ok)
+
+	// 链顺序必须可复现：ResolveAll 的结果就是 failover 顺序。
+	for i := 0; i < 50; i++ {
+		chain := store.ResolveAll("gpt-4.1")
+		if len(chain) != 2 || chain[0].ID != "first" || chain[1].ID != "second" {
+			t.Fatalf("unstable failover order: %#v", chain)
+		}
+	}
+	if chain := store.ResolveAll("shortcut"); len(chain) != 2 || chain[0].ID != "first" || chain[1].ID != "third" {
+		t.Fatalf("alias chain wrong: %#v", chain)
+	}
+	// Resolve 是链首，旧调用方（UI）继续拿到主路由。
+	if head, ok := store.Resolve("gpt-4.1"); !ok || head.ID != "first" {
+		t.Fatalf("Resolve did not return the chain head: %#v ok=%v", head, ok)
 	}
 }
 

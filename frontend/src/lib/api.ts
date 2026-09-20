@@ -96,6 +96,7 @@ const demo: Bootstrap = {
   ],
   proxyRunning: true,
   settings: { host: "127.0.0.1", port: 9400, theme: "light" },
+  chainModes: {},
 };
 export async function bootstrap(): Promise<Bootstrap> {
   const app = (window as any).go?.main?.App;
@@ -225,6 +226,14 @@ export async function saveModelMapping(
   return app ? app.SaveModelMapping(input) : input;
 }
 
+export async function setChainMode(
+  clientModel: string,
+  mode: string,
+): Promise<void> {
+  const app = (window as any).go?.main?.App;
+  if (app) await app.SetChainMode(clientModel, mode);
+}
+
 export async function saveLocalAPIKey(
   input: LocalAPIKey,
 ): Promise<LocalAPIKey> {
@@ -294,7 +303,21 @@ export async function listRequestLogs(
 ): Promise<RequestLogPage> {
   const app = (window as any).go?.main?.App;
   if (!app) {
-    return { items: [], page, pageSize, total: 0, totalPages: 0 };
+    return {
+      items: [],
+      page,
+      pageSize,
+      total: 0,
+      totalPages: 0,
+      stats: {
+        requests: 0,
+        successes: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedInputTokens: 0,
+        reasoningOutputTokens: 0,
+      },
+    };
   }
   return app.ListRequestLogs(page, pageSize, filter);
 }

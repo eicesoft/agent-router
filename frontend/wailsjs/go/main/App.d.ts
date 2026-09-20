@@ -74,6 +74,8 @@ export function SaveSettings(arg1:settings.Settings):Promise<settings.Settings>;
 
 export function SaveSkillBody(arg1:string,arg2:string):Promise<void>;
 
+export function SetChainMode(arg1:string,arg2:string):Promise<void>;
+
 export function SetProviderAPIKey(arg1:string,arg2:string):Promise<void>;
 
 export function SetProviderCredentialMode(arg1:string,arg2:string):Promise<void>;

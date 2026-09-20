@@ -68,11 +68,24 @@ type Breakdown struct {
 }
 
 type RequestLogPage struct {
-	Items      []RequestLog `json:"items"`
-	Page       int          `json:"page"`
-	PageSize   int          `json:"pageSize"`
-	Total      int          `json:"total"`
-	TotalPages int          `json:"totalPages"`
+	Items      []RequestLog    `json:"items"`
+	Page       int             `json:"page"`
+	PageSize   int             `json:"pageSize"`
+	Total      int             `json:"total"`
+	TotalPages int             `json:"totalPages"`
+	Stats      RequestLogStats `json:"stats"`
+}
+
+// RequestLogStats aggregates the rows matching the current filter, so the log
+// panel can show token totals for exactly what is being searched rather than
+// the whole history.
+type RequestLogStats struct {
+	Requests              int `json:"requests"`
+	Successes             int `json:"successes"`
+	InputTokens           int `json:"inputTokens"`
+	OutputTokens          int `json:"outputTokens"`
+	CachedInputTokens     int `json:"cachedInputTokens"`
+	ReasoningOutputTokens int `json:"reasoningOutputTokens"`
 }
 
 // RequestLogFilter searches the current request history by its saved display
@@ -140,9 +153,11 @@ func (t *SQLiteTracker) ListRequestLogs(page, pageSize int, filter RequestLogFil
 	}
 	result := RequestLogPage{Items: []RequestLog{}, Page: page, PageSize: pageSize}
 	where, args := requestLogFilterClause(filter)
-	if err := t.db.QueryRow(`SELECT COUNT(*) FROM request_logs`+where, args...).Scan(&result.Total); err != nil {
+	if err := t.db.QueryRow(`SELECT COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM request_logs`+where, args...).
+		Scan(&result.Total, &result.Stats.Successes, &result.Stats.InputTokens, &result.Stats.OutputTokens, &result.Stats.CachedInputTokens, &result.Stats.ReasoningOutputTokens); err != nil {
 		return result, fmt.Errorf("count request logs: %w", err)
 	}
+	result.Stats.Requests = result.Total
 	result.TotalPages = (result.Total + pageSize - 1) / pageSize
 	queryArgs := append(args, pageSize, (page-1)*pageSize)
 	// Bodies are truncated: two requests by full trial bodies can exceed the
@@ -231,6 +246,27 @@ type UsageStat struct {
 	ReasoningOutputTokens int    `json:"reasoningOutputTokens"`
 }
 
+// Usage aggregates run on every visit to the usage panel, and request_logs
+// holds multi-megabyte request/response bodies. Each query below therefore has
+// to be answerable from a covering index (see backend/storage/sqlite.go): a
+// plan that falls back to scanning the table reads the body overflow pages and
+// turns opening the panel into hundreds of milliseconds of disk I/O.
+const (
+	usageByKeyQuery = `SELECT COALESCE(NULLIF(token_id,''),token_name),COALESCE(NULLIF(token_name,''),'未命名密钥'),COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM request_logs GROUP BY COALESCE(NULLIF(token_id,''),token_name) ORDER BY COUNT(*) DESC, token_name`
+	// The predicate is written as two sargable comparisons rather than
+	// COALESCE(credential_id,credential_name) <> '': SQLite only routes a query
+	// through a covering index when the WHERE clause is indexable, and the
+	// non-sargable form forces a full table scan. GROUP BY/MAX keep referring to
+	// the raw columns so the grouping key stays COALESCE(NULLIF(...)).
+	usageByCredentialQuery = `SELECT COALESCE(NULLIF(credential_id,''),NULLIF(credential_name,'')),COALESCE(NULLIF(credential_name,''),'默认密钥'),COALESCE(MAX(NULLIF(credential_mask,'')),''),COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM request_logs WHERE credential_id <> '' OR credential_name <> '' GROUP BY COALESCE(NULLIF(credential_id,''),credential_name) ORDER BY COUNT(*) DESC, credential_name`
+)
+
+// usageByDimensionQuery aggregates one provider/model dimension. The column is
+// never caller-supplied, so it is interpolated rather than bound.
+func usageByDimensionQuery(column string) string {
+	return `SELECT ` + column + `,COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM usage_events WHERE ` + column + `<>'' GROUP BY ` + column + ` ORDER BY COUNT(*) DESC, ` + column
+}
+
 func (t *SQLiteTracker) UsageByProvider() []UsageStat {
 	return t.usageByDimension("provider_id")
 }
@@ -242,7 +278,7 @@ func (t *SQLiteTracker) UsageByModel() []UsageStat {
 // token_id as the durable group key and token_name as the display name. Key id
 // wins over name so renamed keys stay grouped.
 func (t *SQLiteTracker) UsageByKey() []UsageStat {
-	rows, err := t.db.Query(`SELECT COALESCE(NULLIF(token_id,''),token_name),COALESCE(NULLIF(token_name,''),'未命名密钥'),COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM request_logs GROUP BY COALESCE(NULLIF(token_id,''),token_name) ORDER BY COUNT(*) DESC, token_name`)
+	rows, err := t.db.Query(usageByKeyQuery)
 	if err != nil {
 		return []UsageStat{}
 	}
@@ -267,7 +303,7 @@ func (t *SQLiteTracker) UsageByKey() []UsageStat {
 // MAX(credential_mask) collapses the snapshot's duplicates to one representative
 // mask per group.
 func (t *SQLiteTracker) UsageByCredential() []UsageStat {
-	rows, err := t.db.Query(`SELECT COALESCE(NULLIF(credential_id,''),NULLIF(credential_name,'')),COALESCE(NULLIF(credential_name,''),'默认密钥'),COALESCE(MAX(NULLIF(credential_mask,'')),''),COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM request_logs WHERE COALESCE(credential_id,credential_name) <> '' GROUP BY COALESCE(NULLIF(credential_id,''),credential_name) ORDER BY COUNT(*) DESC, credential_name`)
+	rows, err := t.db.Query(usageByCredentialQuery)
 	if err != nil {
 		return []UsageStat{}
 	}
@@ -287,7 +323,7 @@ func (t *SQLiteTracker) UsageByCredential() []UsageStat {
 }
 
 func (t *SQLiteTracker) usageByDimension(column string) []UsageStat {
-	rows, err := t.db.Query(`SELECT ` + column + `,COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM usage_events WHERE ` + column + `<>'' GROUP BY ` + column + ` ORDER BY COUNT(*) DESC, ` + column)
+	rows, err := t.db.Query(usageByDimensionQuery(column))
 	if err != nil {
 		return []UsageStat{}
 	}

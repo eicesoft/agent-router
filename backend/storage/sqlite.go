@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -42,10 +43,17 @@ CREATE TABLE IF NOT EXISTS providers (
 CREATE TABLE IF NOT EXISTS deleted_providers (
   id TEXT PRIMARY KEY
 );
+-- client_model 刻意不带 UNIQUE：同一个客户端模型名可以挂多条映射（不同提供商），
+-- 由 proxy 按顺序 failover。见 backend/config/mappings.go 的 ResolveAll。
 CREATE TABLE IF NOT EXISTS model_mappings (
-  id TEXT PRIMARY KEY, client_model TEXT NOT NULL UNIQUE, provider_id TEXT NOT NULL,
+  id TEXT PRIMARY KEY, client_model TEXT NOT NULL, provider_id TEXT NOT NULL,
   upstream_model TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
   aliases_json TEXT NOT NULL DEFAULT '[]'
+);
+-- 同名链级策略：一条 failover 链共享一个起点规则（默认 failover）。
+-- 见 backend/config/mappings.go 的 ChainMode。
+CREATE TABLE IF NOT EXISTS model_chain_modes (
+  client_model TEXT PRIMARY KEY, mode TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS usage_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, provider_id TEXT NOT NULL,
@@ -154,6 +162,42 @@ CREATE INDEX IF NOT EXISTS idx_provider_credentials_provider ON provider_credent
 				return nil, fmt.Errorf("migrate %s.%s: %w", column.table, column.name, err)
 			}
 		}
+	}
+	// 旧库的 model_mappings 带 client_model UNIQUE，挡死了同名多路由。SQLite 不能直接
+	// 删约束，只能整表重建；按 sqlite_master 里的建表语句判断，所以幂等。放在补列之后，
+	// 重建时 aliases_json 一定已经存在。
+	var mappingsDDL string
+	if err := db.QueryRow(`SELECT COALESCE(sql, '') FROM sqlite_master WHERE type = 'table' AND name = 'model_mappings'`).Scan(&mappingsDDL); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if strings.Contains(mappingsDDL, "client_model TEXT NOT NULL UNIQUE") {
+		if _, err := db.Exec(`
+CREATE TABLE model_mappings_rebuilt (
+  id TEXT PRIMARY KEY, client_model TEXT NOT NULL, provider_id TEXT NOT NULL,
+  upstream_model TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+  aliases_json TEXT NOT NULL DEFAULT '[]'
+);
+INSERT INTO model_mappings_rebuilt(id, client_model, provider_id, upstream_model, enabled, aliases_json)
+  SELECT id, client_model, provider_id, upstream_model, enabled, aliases_json FROM model_mappings;
+DROP TABLE model_mappings;
+ALTER TABLE model_mappings_rebuilt RENAME TO model_mappings;`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate model_mappings client_model unique: %w", err)
+		}
+	}
+	// 使用统计的覆盖索引必须建在补列之后：老库重建前根本没有 credential_id，
+	// 内联 DDL 里的 CREATE INDEX IF NOT EXISTS 会在建表后立刻执行而失败。
+	// 上游 Key 用量跑在 request_logs 这张带大体积 body 的表上，WHERE 里的
+	// credential_id <> '' OR credential_name <> '' 只有被规划成索引扫描才不会
+	// 顺序读完所有 body 溢出页（否则每次打开使用情况页要抖几百毫秒）。
+	// 见 backend/usage/sqlite.go 的 usageByCredentialQuery / usageByDimensionQuery。
+	if _, err := db.Exec(`
+CREATE INDEX IF NOT EXISTS idx_request_logs_credential ON request_logs(credential_id, credential_name, credential_mask, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens);
+CREATE INDEX IF NOT EXISTS idx_usage_events_provider ON usage_events(provider_id, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens);
+CREATE INDEX IF NOT EXISTS idx_usage_events_model ON usage_events(model, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens);`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate usage indexes: %w", err)
 	}
 	return db, nil
 }

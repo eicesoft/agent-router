@@ -616,32 +616,38 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	requestBody, _ := json.Marshal(input)
 	userAgent := r.Header.Get("User-Agent")
 
-	mapping, ok := s.resolveMapping(input.Model)
-	if !ok {
+	routes := s.resolveRoutes(input.Model)
+	if len(routes) == 0 {
 		writeError(w, 404, "model_not_found", "no enabled mapping for model "+input.Model)
 		return
 	}
-	p, ok := s.registry.Get(mapping.ProviderID)
-	if !ok || !p.Enabled {
-		writeError(w, 503, "provider_unavailable", "target provider is unavailable")
-		return
-	}
 	// 本端点只覆盖 Chat Completions 类上游：Responses↔Anthropic 的双向转换没有
-	// 实现，与其发一个上游看不懂的请求，不如明确拒掉。
-	if p.Kind == provider.KindAnthropic {
+	// 实现，与其发一个上游看不懂的请求，不如明确拒掉。同名链上混进 Anthropic 路由时
+	// 只把它剔出链尾——OpenAI 兼容的那几家仍能正常 failover；整条链都是 Anthropic
+	// 才报 501。
+	chat := routes[:0:0]
+	for _, target := range routes {
+		if target.provider.Kind != provider.KindAnthropic {
+			chat = append(chat, target)
+		}
+	}
+	if len(chat) == 0 {
 		writeError(w, 501, "not_implemented", "the responses endpoint does not support Anthropic providers; map this model to an OpenAI-compatible provider")
 		return
 	}
+	routes = chat
 
 	chatRequest, plan, droppedTools := input.toChat()
 	clientModel := input.Model
 	session := responsesSession(r, input)
 
 	var served requestCredential
+	// 日志记最终应答的那条路由，failover 后回填。
+	route := routes[0]
 	logEvent := func(success bool, responseBody, errorMessage string, tokens tokenUsage) {
 		_ = s.usage.Record(usage.Event{
-			TokenID: tokenID, TokenName: tokenName, ProviderID: p.ID, ProviderName: p.Name,
-			ClientModel: mapping.ClientModel, UpstreamModel: mapping.UpstreamModel,
+			TokenID: tokenID, TokenName: tokenName, ProviderID: route.provider.ID, ProviderName: route.provider.Name,
+			ClientModel: route.mapping.ClientModel, UpstreamModel: route.mapping.UpstreamModel,
 			UserAgent:   userAgent,
 			RequestBody: string(requestBody), ResponseBody: responseBody,
 			InputTokens: tokens.Input, OutputTokens: tokens.Output,
@@ -658,16 +664,19 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		droppedNote = "dropped hosted tools: " + strings.Join(droppedTools, ", ")
 	}
 
-	chatRequest.Model = mapping.UpstreamModel
-	response, lease, err := s.withCredential(r.Context(), p, session, func(key string) (*http.Response, error) {
-		return s.adapters.For(p.Kind).Do(r.Context(), p, key, chatRequest)
+	response, lease, target, err := s.withRoute(r.Context(), routes, session, func(t routeTarget, key string) (*http.Response, error) {
+		payload := chatRequest
+		payload.Model = t.mapping.UpstreamModel
+		return s.adapters.For(t.provider.Kind).Do(r.Context(), t.provider, key, payload)
 	})
 	if err != nil {
-		status, kind, message := credentialError(err, p.Name)
+		route = target
+		status, kind, message := credentialError(err, target.provider.Name)
 		writeError(w, status, kind, message)
 		logEvent(false, "", message, tokenUsage{})
 		return
 	}
+	route = target
 	served.set(lease)
 	defer response.Body.Close()
 

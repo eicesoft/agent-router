@@ -293,6 +293,19 @@ func (g *Generator) Write(t Tool) (string, error) {
 	if t.Config == "" {
 		t = Resolve(t)
 	}
+	// 目录文件必须与 config.toml 成对存在：config.toml 里那行 model_catalog_json 只是
+	// 指针，文件缺失时 Codex 启动即报 "No such file or directory (os error 2)" 并拒绝
+	// 加载配置，连会话都开不了。先写目录再写配置，写目录失败时配置还没被改成悬空
+	// 状态。目录完全由本应用生成，不做备份——每次改勾选都留一份备份只会堆垃圾。
+	if content, ok := g.CodexCatalog(t); ok {
+		path := codexCatalogPath(t.Config)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return "", err
+		}
+	}
 	if err := writeWithBackup(t.Config, g.Render(t)); err != nil {
 		return "", err
 	}

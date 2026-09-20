@@ -642,6 +642,26 @@ header [data-slot="button"] {
   color: var(--muted-3);
   font-size: 11px;
 }
+.metric-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.metric-head > span {
+  white-space: nowrap;
+  color: var(--ink-heading);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.045em;
+}
+.metric .metric-head > strong {
+  margin: 4px 0;
+  color: var(--muted-3);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
 .metric strong {
   display: block;
   color: var(--ink-heading);
@@ -650,8 +670,10 @@ header [data-slot="button"] {
   margin: 4px 0;
 }
 .metric-token-value {
-  font-size: 17px !important;
-  letter-spacing: -0.03em !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+  color: var(--muted-3) !important;
   cursor: help;
 }
 .metric small {
@@ -983,6 +1005,39 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+}
+/* 同名多提供商时标出 failover 顺位，让用户看得出卡片之间的关系。 */
+.route-chain-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.route-chain-rank {
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--warn-ink);
+  border-radius: 5px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  width: fit-content;
+}
+/* 链级调度策略：只出现在链首卡片上，改的是整条链先打哪一家。 */
+.route-chain-mode {
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--ink-body);
+  background: var(--well-bg);
+  border: 1px solid var(--card-border-strong);
+  border-radius: 5px;
+  padding: 1px 4px;
+  max-width: 100px;
+}
+/* 抽屉里的保存失败原因（例如重复路由被后端拒绝）。 */
+.mapping-save-error {
+  font-size: 11px;
+  color: var(--error-ink-strong);
+  margin: 0;
 }
 .agent-grid {
   display: grid;
@@ -1805,6 +1860,48 @@ code {
   display: grid;
   gap: 12px;
 }
+/* 查询条件命中行的统计：一次查询的口径，卡片跟随筛选结果变化。 */
+.request-log-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  gap: 8px;
+}
+/* 查询进行中时统计仍是上一次条件的结果：压低对比度表明它们即将被替换，
+   避免被当成当前筛选口径读走。 */
+.request-log-stats.is-loading {
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+.request-log-stat {
+  display: grid;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 1px solid var(--card-border-strong);
+  border-radius: 10px;
+  background: var(--card-bg);
+}
+.request-log-stat-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.request-log-stat-head > span {
+  color: var(--ink-heading);
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+.request-log-stat-head strong {
+  color: var(--muted-3);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.request-log-stat small {
+  color: var(--muted-3);
+  font-size: 11px;
+}
 .request-log-filters {
   display: grid;
   grid-template-columns:
@@ -1976,6 +2073,7 @@ code {
   gap: 12px;
 }
 .request-log-card {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1984,6 +2082,41 @@ code {
   border-radius: 12px;
   background: var(--card-bg);
   overflow: hidden;
+}
+/* 查询遮罩：覆盖整张卡片（含表头）。它刻意接收指针事件——查询中的旧数据马上
+   会被替换，允许滚动或点到遮罩下的行只会让人读到即将过期的内容。筛选行在
+   卡片之外，靠按钮自身的 disabled 防重复提交。 */
+.request-log-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--muted-2);
+  font-size: 12px;
+  background: var(--loading-bg);
+}
+/* 首次加载占位与查询遮罩同为 loading 语义，横排图标 + 文案。 */
+.request-log-loading {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+/* 详情正文区顶部的加载条：listing 里的内容只是 50 字符预览，完整 body 还在
+   路上，不提示的话会被当成「内容就是这么短」。 */
+.request-log-detail-loading {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--divider);
+  color: var(--muted-2);
+  font-size: 11px;
 }
 .request-log-head {
   flex: 0 0 auto;
@@ -2162,13 +2295,16 @@ code {
   align-items: baseline;
 }
 .usage-token-head span {
-  color: var(--muted-3);
-  font-size: 11px;
-}
-.usage-token-head strong {
   color: var(--ink-heading);
   font-size: 22px;
+  font-weight: 600;
   letter-spacing: -0.045em;
+}
+.usage-token-head strong {
+  color: var(--muted-3);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
 }
 .usage-token-value {
   color: inherit;
@@ -2177,9 +2313,10 @@ code {
   cursor: help;
 }
 .usage-token-head .usage-token-value {
-  font-size: 17px;
-  font-weight: 650;
-  letter-spacing: -0.03em;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--muted-3);
 }
 .usage-stat-token-suffix {
   margin-left: 4px;

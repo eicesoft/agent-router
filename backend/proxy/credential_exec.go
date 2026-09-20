@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"agent-router/backend/config"
 	"agent-router/backend/credential"
 	"agent-router/backend/provider"
 )
@@ -51,6 +52,14 @@ func sessionIdentity(r *http.Request, system, firstUser string) string {
 		return ""
 	}
 	return credential.Fingerprint(system, firstUser)
+}
+
+// routeTarget is one resolved hop: the mapping a client model name matched plus the
+// provider it points at. Several providers can serve the same client model name, so
+// a request resolves to an ordered list of these and they are tried in turn.
+type routeTarget struct {
+	mapping  config.ModelMapping
+	provider provider.Provider
 }
 
 // withCredential picks a key for one request, runs it, and on a retryable
@@ -122,6 +131,60 @@ func (s *Server) withCredential(ctx context.Context, p provider.Provider, sessio
 		return prevResp, prevLease, nil
 	}
 	return nil, credential.Lease{}, lastErr
+}
+
+// withRoute runs a request across the resolved route chain. Each route first gets
+// the provider's own key failover (withCredential); a route that still comes back
+// retryable hands the request to the next provider in the chain. The first route
+// whose answer is not retryable wins, so a healthy provider short-circuits the rest
+// and an upstream that rejects the request itself is not retried elsewhere.
+//
+// It returns the response to relay, the key that served it, and the route it came
+// from — the caller logs the latter, since which provider answered is the whole
+// point of the chain.
+//
+// ponytail: unbounded chain length; each provider is already capped at 2 key
+// attempts, so a chain of N costs at most 2N upstream calls. Cap it if a user
+// builds a pathologically long one.
+func (s *Server) withRoute(ctx context.Context, routes []routeTarget, session string, run func(routeTarget, string) (*http.Response, error)) (*http.Response, credential.Lease, routeTarget, error) {
+	var (
+		prevResp  *http.Response
+		prevLease credential.Lease
+		prevRoute routeTarget
+		lastErr   error
+		// 出错时记的是产生这个错误的那条路由：整条链都失败时要报「哪家没配 Key」，
+		// 而不是把账算在链首头上。
+		errRoute routeTarget
+	)
+	for _, route := range routes {
+		resp, lease, err := s.withCredential(ctx, route.provider, session, func(key string) (*http.Response, error) {
+			return run(route, key)
+		})
+		if err != nil {
+			// No key could be acquired or every attempt failed at the transport
+			// layer: this provider is unusable, so try the next one.
+			lastErr = err
+			errRoute = route
+			continue
+		}
+		if !retryableStatus(resp.StatusCode) {
+			if prevResp != nil {
+				_ = prevResp.Body.Close()
+			}
+			return resp, lease, route, nil
+		}
+		if prevResp != nil {
+			_ = prevResp.Body.Close()
+		}
+		prevResp, prevLease, prevRoute = resp, lease, route
+	}
+	if prevResp != nil {
+		// Every provider in the chain was retryable. Report the first one's status:
+		// it is the provider the user configured as primary.
+		return prevResp, prevLease, prevRoute, nil
+	}
+	// 没有任何一家给出响应：把出错的那条路由一并返回，调用方据此报「哪家不可用」。
+	return nil, credential.Lease{}, errRoute, lastErr
 }
 
 // retryableStatus reports whether another key is worth trying. 401/403 mean this

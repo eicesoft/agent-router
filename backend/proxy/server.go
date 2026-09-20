@@ -38,6 +38,11 @@ type Server struct {
 	// toggle can call Start/Close while a request is being served.
 	mu   sync.Mutex
 	http *http.Server
+
+	// chainCursor drives round-robin chains: one counter per client model, so
+	// each request starts at the next provider. Failover chains never touch it.
+	chainCursorMu sync.Mutex
+	chainCursor   map[string]int
 }
 
 type KeyVerifier interface {
@@ -105,7 +110,7 @@ func (s *stallCloser) Close() error {
 // owner of which key serves a request.
 func New(registry *provider.Registry, mappings *config.MappingStore, credentials *credential.Pool, usageTracker *usage.SQLiteTracker, keys KeyVerifier) *Server {
 	client := upstreamClient()
-	return &Server{registry: registry, mappings: mappings, credentials: credentials, keys: keys, adapters: NewAdapterSet(client), client: client, usage: usageTracker, stallTimeout: upstreamStallTimeout}
+	return &Server{registry: registry, mappings: mappings, credentials: credentials, keys: keys, adapters: NewAdapterSet(client), client: client, usage: usageTracker, stallTimeout: upstreamStallTimeout, chainCursor: map[string]int{}}
 }
 
 // stallGuarded wraps a streaming upstream body so silence is fatal instead of
@@ -188,8 +193,15 @@ func (s *Server) Running() bool {
 // generated configs list exactly what the proxy can route.
 func (s *Server) EffectiveMappings() []config.ModelMapping {
 	out := make([]config.ModelMapping, 0, len(s.effectiveMappings()))
+	// 同名多路由对外只暴露一个客户端模型名：/v1/models 与生成的 CLI 配置列的是「网关
+	// 能路由哪些名字」，一条名字背后有几家提供商做 failover 是内部细节。
+	seen := make(map[string]struct{})
 	for _, mapping := range s.effectiveMappings() {
 		if _, ok := s.registry.Get(mapping.ProviderID); ok {
+			if _, dup := seen[mapping.ClientModel]; dup {
+				continue
+			}
+			seen[mapping.ClientModel] = struct{}{}
 			out = append(out, mapping)
 		}
 	}
@@ -204,11 +216,16 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	models := make([]Model, 0)
+	seen := make(map[string]struct{})
 	for _, mapping := range s.effectiveMappings() {
 		p, ok := s.registry.Get(mapping.ProviderID)
 		if !ok {
 			continue
 		}
+		if _, dup := seen[mapping.ClientModel]; dup {
+			continue
+		}
+		seen[mapping.ClientModel] = struct{}{}
 		models = append(models, Model{
 			ID:      mapping.ClientModel,
 			Object:  "model",
@@ -224,11 +241,15 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 // in the UI. A saved mapping for a provider/upstream model pair takes
 // precedence, including a disabled mapping which intentionally suppresses its
 // automatic counterpart.
+//
+// It no longer de-duplicates by client model name: the same name on different
+// providers is a failover chain, so both routes must survive here. Consumers that
+// advertise names (EffectiveMappings, listModels) collapse the duplicates; routing
+// (resolveRoutes) keeps them in order.
 func (s *Server) effectiveMappings() []config.ModelMapping {
 	stored := s.mappings.List()
 	byRoute := make(map[string]config.ModelMapping, len(stored))
 	models := make([]config.ModelMapping, 0, len(stored))
-	seenClientModels := make(map[string]struct{})
 	for _, mapping := range stored {
 		byRoute[mapping.ProviderID+"\x00"+mapping.UpstreamModel] = mapping
 		p, ok := s.registry.Get(mapping.ProviderID)
@@ -236,7 +257,6 @@ func (s *Server) effectiveMappings() []config.ModelMapping {
 			continue
 		}
 		models = append(models, mapping)
-		seenClientModels[mapping.ClientModel] = struct{}{}
 	}
 	for _, p := range s.registry.List() {
 		if !p.Enabled {
@@ -247,9 +267,6 @@ func (s *Server) effectiveMappings() []config.ModelMapping {
 				continue
 			}
 			clientModel := defaultClientModel(p, upstreamModel)
-			if _, duplicate := seenClientModels[clientModel]; duplicate {
-				continue
-			}
 			models = append(models, config.ModelMapping{
 				ID:            "auto-" + p.ID + "-" + upstreamModel,
 				ClientModel:   clientModel,
@@ -257,25 +274,82 @@ func (s *Server) effectiveMappings() []config.ModelMapping {
 				UpstreamModel: upstreamModel,
 				Enabled:       true,
 			})
-			seenClientModels[clientModel] = struct{}{}
 		}
 	}
-	sort.Slice(models, func(i, j int) bool {
-		return models[i].ClientModel < models[j].ClientModel
+	// 稳定排序：同名的一条 failover 链内部顺序必须可复现，否则同一个请求这次走 A 下次
+	// 走 B，用量归属也跟着漂。已保存映射的 ID 由创建时间派生，自动映射是
+	// auto-<provider>-<model>，两者按 ID 序固定。
+	sort.SliceStable(models, func(i, j int) bool {
+		if models[i].ClientModel != models[j].ClientModel {
+			return models[i].ClientModel < models[j].ClientModel
+		}
+		return models[i].ID < models[j].ID
 	})
 	return models
 }
 
-func (s *Server) resolveMapping(clientModel string) (config.ModelMapping, bool) {
+// resolveRoutes returns every enabled route answering to clientModel in configured
+// order, each paired with its live provider. Several providers can serve the same
+// name and the caller tries them in turn (withRoute). Empty means no route matched,
+// or every match pointed at a missing or disabled provider.
+//
+// effectiveMappings already excludes routes whose mapping or provider is disabled,
+// so an empty result is the only failure mode and it means the same thing to the
+// client either way: this name is not routable right now.
+//
+// 链级策略为轮转时把起点向后挪一位再返回，同一 conversation 的下一轮请求就从
+// 另一家开始；起点之后的顺序不变，所以某一家失败时仍按 failover 往下走。轮转
+// 只改起点，不改链的内容。
+func (s *Server) resolveRoutes(clientModel string) []routeTarget {
 	name := strings.TrimSpace(clientModel)
+	var routes []routeTarget
 	for _, mapping := range s.effectiveMappings() {
+		hit := false
 		for _, candidate := range mapping.Names() {
 			if candidate == name {
-				return mapping, true
+				hit = true
+				break
 			}
 		}
+		if !hit {
+			continue
+		}
+		p, ok := s.registry.Get(mapping.ProviderID)
+		if !ok || !p.Enabled {
+			continue
+		}
+		routes = append(routes, routeTarget{mapping: mapping, provider: p})
 	}
-	return config.ModelMapping{}, false
+	// 策略按声明的 clientModel 存储（UI 也只能在那一行上设置），而请求可能用的是
+	// 别名。别名与声明名等价，所以两者共用同一条链的策略与起点计数。
+	if len(routes) > 1 {
+		chainName := routes[0].mapping.ClientModel
+		if s.mappings.ChainModeFor(chainName) == config.ChainRoundRobin {
+			routes = s.rotateRoutes(chainName, routes)
+		}
+	}
+	return routes
+}
+
+// rotateRoutes moves the chain's starting point forward by one per request. The
+// counter is keyed by the declared client model name, so every alias of the same
+// chain shares its rotation instead of drifting apart.
+//
+// ponytail: 逐请求轮转，没做会话级粘性。同一会话的多轮会被分到不同提供商，上游按
+// 提供商隔离的 prompt cache 就此失效；需要缓存命中就切回 failover。要两全的话，
+// 把计数器换成按 session 取值（调用点需先算出 session 再 resolveRoutes）。
+func (s *Server) rotateRoutes(name string, routes []routeTarget) []routeTarget {
+	s.chainCursorMu.Lock()
+	start := s.chainCursor[name] % len(routes)
+	s.chainCursor[name] = start + 1
+	s.chainCursorMu.Unlock()
+	if start == 0 {
+		return routes
+	}
+	out := make([]routeTarget, 0, len(routes))
+	out = append(out, routes[start:]...)
+	out = append(out, routes[:start]...)
+	return out
 }
 
 func defaultClientModel(p provider.Provider, upstreamModel string) string {
@@ -330,24 +404,22 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	// upstream name. The log deliberately never includes the provider API key.
 	requestBody, _ := json.Marshal(input)
 	userAgent := r.Header.Get("User-Agent")
-	mapping, ok := s.resolveMapping(input.Model)
-	if !ok {
+	// 同一个客户端模型名可以挂多家提供商：按配置顺序尝试，前一家 429/401/5xx 就转下一家。
+	routes := s.resolveRoutes(input.Model)
+	if len(routes) == 0 {
 		writeError(w, 404, "model_not_found", "no enabled mapping for model "+input.Model)
-		return
-	}
-	p, ok := s.registry.Get(mapping.ProviderID)
-	if !ok || !p.Enabled {
-		writeError(w, 503, "provider_unavailable", "target provider is unavailable")
 		return
 	}
 	// The session identity is derived before a key is chosen: in session mode it
 	// decides which key serves this conversation, so it must be known up front.
 	session := sessionIdentity(r, firstMessageText(input.Messages, "system"), firstMessageText(input.Messages, "user"))
 	var served requestCredential
+	// 日志记的是最终应答的那条路由，解析完成前先用链首占位。
+	route := routes[0]
 	logEvent := func(success bool, responseBody, errorMessage string, tokens tokenUsage) {
 		_ = s.usage.Record(usage.Event{
-			TokenID: tokenID, TokenName: tokenName, ProviderID: p.ID, ProviderName: p.Name,
-			ClientModel: mapping.ClientModel, UpstreamModel: mapping.UpstreamModel,
+			TokenID: tokenID, TokenName: tokenName, ProviderID: route.provider.ID, ProviderName: route.provider.Name,
+			ClientModel: route.mapping.ClientModel, UpstreamModel: route.mapping.UpstreamModel,
 			UserAgent:   userAgent,
 			RequestBody: string(requestBody), ResponseBody: responseBody,
 			InputTokens: tokens.Input, OutputTokens: tokens.Output,
@@ -357,16 +429,21 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 			CredentialID: served.id, CredentialName: served.name, CredentialMask: served.mask,
 		})
 	}
-	input.Model = mapping.UpstreamModel
-	response, lease, err := s.withCredential(r.Context(), p, session, func(key string) (*http.Response, error) {
-		return s.adapters.For(p.Kind).Do(r.Context(), p, key, input)
+	response, lease, servedRoute, err := s.withRoute(r.Context(), routes, session, func(target routeTarget, key string) (*http.Response, error) {
+		// 每家提供商的上游模型名可能不同，逐次拷贝请求体而不是改 input。
+		payload := input
+		payload.Model = target.mapping.UpstreamModel
+		return s.adapters.For(target.provider.Kind).Do(r.Context(), target.provider, key, payload)
 	})
 	if err != nil {
-		status, kind, message := credentialError(err, p.Name)
+		// 整条链都没应答时报出错的那家，否则用户看不出该去修哪个提供商。
+		route = servedRoute
+		status, kind, message := credentialError(err, route.provider.Name)
 		writeError(w, status, kind, message)
 		logEvent(false, "", message, tokenUsage{})
 		return
 	}
+	route = servedRoute
 	served.set(lease)
 	defer response.Body.Close()
 	if response.StatusCode >= 300 {
@@ -432,6 +509,26 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	logEvent(true, string(body), "", tokensFromResponse(body))
 }
 
+// filterRoutesByKind keeps only the routes whose provider speaks the same wire
+// format as the chain head. A client model name can be mapped onto both an Anthropic
+// and an OpenAI-compatible provider, and the two paths build different request
+// bodies, so failover across them would send one upstream a body it cannot parse.
+// Dropping the mismatched tail is the honest reading of the config: the head defines
+// the format the rest of the chain must share.
+func filterRoutesByKind(routes []routeTarget) []routeTarget {
+	if len(routes) == 0 {
+		return routes
+	}
+	head := routes[0].provider.Kind == provider.KindAnthropic
+	out := make([]routeTarget, 0, len(routes))
+	for _, route := range routes {
+		if (route.provider.Kind == provider.KindAnthropic) == head {
+			out = append(out, route)
+		}
+	}
+	return out
+}
+
 func (s *Server) messagesHandler(w http.ResponseWriter, r *http.Request) {
 	// Claude Desktop sends x-api-key, not Authorization Bearer.
 	token := r.Header.Get("x-api-key")
@@ -451,26 +548,24 @@ func (s *Server) messagesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	userAgent := r.Header.Get("User-Agent")
 
-	mapping, ok := s.resolveMapping(input.Model)
-	if !ok {
+	routes := s.resolveRoutes(input.Model)
+	if len(routes) == 0 {
 		writeError(w, 404, "model_not_found", "no enabled mapping for model "+input.Model)
 		return
 	}
-	p, ok := s.registry.Get(mapping.ProviderID)
-	if !ok || !p.Enabled {
-		writeError(w, 503, "provider_unavailable", "target provider is unavailable")
-		return
-	}
+	routes = filterRoutesByKind(routes)
 	// Anthropic carries the system prompt as a top-level field, not a message,
 	// so the conversation head is built from it plus the first user turn.
 	session := sessionIdentity(r, extractAnthropicSystem(input.System), firstAnthropicMessageText(input.Messages, "user"))
 	requestBody, _ := json.Marshal(input)
 
 	var served requestCredential
+	// 日志记最终应答的那条路由；下游 handler 在 failover 之后回填。
+	route := routes[0]
 	logEvent := func(success bool, responseBody, errorMessage string, tokens tokenUsage) {
 		_ = s.usage.Record(usage.Event{
-			TokenID: tokenID, TokenName: tokenName, ProviderID: p.ID, ProviderName: p.Name,
-			ClientModel: mapping.ClientModel, UpstreamModel: mapping.UpstreamModel,
+			TokenID: tokenID, TokenName: tokenName, ProviderID: route.provider.ID, ProviderName: route.provider.Name,
+			ClientModel: route.mapping.ClientModel, UpstreamModel: route.mapping.UpstreamModel,
 			UserAgent:   userAgent,
 			RequestBody: string(requestBody), ResponseBody: responseBody,
 			InputTokens: tokens.Input, OutputTokens: tokens.Output,
@@ -482,13 +577,13 @@ func (s *Server) messagesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// KindAnthropic upstream: passthrough (swap model name + auth, pipe body).
-	if p.Kind == provider.KindAnthropic {
-		s.anthropicPassthrough(w, r, p, session, mapping, input, logEvent, &served)
+	if routes[0].provider.Kind == provider.KindAnthropic {
+		s.anthropicPassthrough(w, r, routes, session, input, logEvent, &served, &route)
 		return
 	}
 
 	// Other kinds: convert Anthropic -> OpenAI -> route -> convert response back.
-	s.anthropicViaOpenAI(w, r, p, session, mapping, input, logEvent, &served)
+	s.anthropicViaOpenAI(w, r, routes, session, input, logEvent, &served, &route)
 }
 
 // anthropicPassthrough forwards an Anthropic-format request to an Anthropic
@@ -496,20 +591,25 @@ func (s *Server) messagesHandler(w http.ResponseWriter, r *http.Request) {
 // through. It builds its own request rather than going through an adapter, so
 // the credential pool is reached via withCredential's closure, which is what
 // keeps this path under the same rotation and failover rules as the others.
-func (s *Server) anthropicPassthrough(w http.ResponseWriter, r *http.Request, p provider.Provider, session string, mapping config.ModelMapping, input AnthropicRequest, logEvent func(bool, string, string, tokenUsage), served *requestCredential) {
-	input.Model = mapping.UpstreamModel
-	body, err := json.Marshal(input)
-	if err != nil {
-		writeError(w, 500, "internal_error", "serialization failure")
-		logEvent(false, "", err.Error(), tokenUsage{})
-		return
+func (s *Server) anthropicPassthrough(w http.ResponseWriter, r *http.Request, routes []routeTarget, session string, input AnthropicRequest, logEvent func(bool, string, string, tokenUsage), served *requestCredential, route *routeTarget) {
+	// 每条路由的上游模型名可能不同，请求体按路由现算并缓存，重试时不必重复序列化。
+	bodies := make(map[string][]byte, len(routes))
+	for _, target := range routes {
+		payload := input
+		payload.Model = target.mapping.UpstreamModel
+		body, err := json.Marshal(payload)
+		if err != nil {
+			writeError(w, 500, "internal_error", "serialization failure")
+			logEvent(false, "", err.Error(), tokenUsage{})
+			return
+		}
+		bodies[target.mapping.ID] = body
 	}
-
-	upstreamURL := strings.TrimRight(p.BaseURL, "/") + "/v1/messages"
-	resp, lease, err := s.withCredential(r.Context(), p, session, func(key string) (*http.Response, error) {
+	resp, lease, target, err := s.withRoute(r.Context(), routes, session, func(t routeTarget, key string) (*http.Response, error) {
+		upstreamURL := strings.TrimRight(t.provider.BaseURL, "/") + "/v1/messages"
 		// A fresh reader per attempt: the body is consumed by the first try, so
 		// a retry built on the same reader would send an empty request.
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, upstreamURL, bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, upstreamURL, bytes.NewReader(bodies[t.mapping.ID]))
 		if err != nil {
 			return nil, err
 		}
@@ -519,11 +619,13 @@ func (s *Server) anthropicPassthrough(w http.ResponseWriter, r *http.Request, p 
 		return s.client.Do(req)
 	})
 	if err != nil {
-		status, kind, message := credentialError(err, p.Name)
+		*route = target
+		status, kind, message := credentialError(err, target.provider.Name)
 		writeError(w, status, kind, message)
 		logEvent(false, "", message, tokenUsage{})
 		return
 	}
+	*route = target
 	served.set(lease)
 	defer resp.Body.Close()
 
@@ -588,7 +690,7 @@ func (s *Server) anthropicPassthrough(w http.ResponseWriter, r *http.Request, p 
 // anthropicViaOpenAI converts an Anthropic request to OpenAI format, routes
 // through the appropriate adapter, then converts the response back.
 // Streaming for non-Anthropic upstreams is not supported yet.
-func (s *Server) anthropicViaOpenAI(w http.ResponseWriter, r *http.Request, p provider.Provider, session string, mapping config.ModelMapping, input AnthropicRequest, logEvent func(bool, string, string, tokenUsage), served *requestCredential) {
+func (s *Server) anthropicViaOpenAI(w http.ResponseWriter, r *http.Request, routes []routeTarget, session string, input AnthropicRequest, logEvent func(bool, string, string, tokenUsage), served *requestCredential, route *routeTarget) {
 	system := extractAnthropicSystem(input.System)
 	openAIMsgs := make([]Message, 0, len(input.Messages)+1)
 	if system != "" {
@@ -599,7 +701,7 @@ func (s *Server) anthropicViaOpenAI(w http.ResponseWriter, r *http.Request, p pr
 	}
 
 	openAIReq := Request{
-		Model:       mapping.UpstreamModel,
+		// Model 由 withRoute 的闭包按当前路由填：同名链上各家的上游模型名可能不同。
 		Messages:    openAIMsgs,
 		Temperature: input.Temperature,
 		TopP:        input.TopP,
@@ -634,15 +736,19 @@ func (s *Server) anthropicViaOpenAI(w http.ResponseWriter, r *http.Request, p pr
 		openAIReq.StreamOptions = map[string]bool{"include_usage": true}
 	}
 
-	response, lease, err := s.withCredential(r.Context(), p, session, func(key string) (*http.Response, error) {
-		return s.adapters.For(p.Kind).Do(r.Context(), p, key, openAIReq)
+	response, lease, target, err := s.withRoute(r.Context(), routes, session, func(t routeTarget, key string) (*http.Response, error) {
+		payload := openAIReq
+		payload.Model = t.mapping.UpstreamModel
+		return s.adapters.For(t.provider.Kind).Do(r.Context(), t.provider, key, payload)
 	})
 	if err != nil {
-		status, kind, message := credentialError(err, p.Name)
+		*route = target
+		status, kind, message := credentialError(err, target.provider.Name)
 		writeError(w, status, kind, message)
 		logEvent(false, "", message, tokenUsage{})
 		return
 	}
+	*route = target
 	served.set(lease)
 	defer response.Body.Close()
 
