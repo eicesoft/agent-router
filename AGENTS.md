@@ -2,7 +2,7 @@
 
 **Agent Router** —— Wails v2 桌面应用，本地模型路由网关。React 界面配置 LLM 提供商（OpenAI、Anthropic、Gemini）、模型映射、本地 API key；本地 HTTP 服务（`127.0.0.1:9400`）暴露 OpenAI 兼容的 `/v1/chat/completions`、Anthropic 的 `/v1/messages`，以及 `/v1/responses`（Codex CLI 的线协议，内部转成 Chat Completions 转发），按映射转发到上游提供商。
 
-- Go 后端在仓库根目录与 `backend/`（模块 `agent-router`，go 1.25.0，sqlite3 需 cgo）；Codex 的 `config.toml` 模板用 `github.com/pelletier/go-toml/v2` 的 `unstable` 包定位行号，写回仍是行级 splice
+- Go 后端在仓库根目录与 `backend/`（模块 `agent-router`，go 1.25.0，SQLite 用纯 Go 驱动 `modernc.org/sqlite`，无需 cgo）；Codex 的 `config.toml` 模板用 `github.com/pelletier/go-toml/v2` 的 `unstable` 包定位行号，写回仍是行级 splice
 - React 18 + TypeScript + Vite 前端在 `frontend/`
 - Wails v2.14.0 粘合二者：`main.go` 嵌入 `frontend/dist`，绑定 `*App`
 
@@ -10,7 +10,7 @@
 
 ## 开发命令
 
-包管理器：**npm**。需要 Wails CLI、cgo（mattn/go-sqlite3）。
+包管理器：**npm**。需要 Wails CLI。
 
 ```bash
 wails dev                  # 开发（热重载 Go + Vite）
@@ -77,7 +77,7 @@ React UI → App 方法（Wails 绑定）
 | `backend/envcfg/` | 把网关 key 写入用户 shell 环境（`AGENT_ROUTER_API_KEY`），跨平台 |
 | `backend/templates/` | 为 CLI 工具（opencode/mimocode/pi/claude/omp/codex）生成网关接入配置；内嵌 `catalog.json` 声明式目录（`configRel` 配置路径、`skillsRel` 该 CLI 的 skills 目录）；读取用户现有配置文件并合并（保留原字段顺序），JSON/YAML/TOML 三种 shape。Codex 额外为每个选中模型写一份 `<名>.config.toml` profile（`codex.go`），用 `codex --profile <名>` 切换 |
 | `backend/skills/` | 扫描/管理 skills 目录（纯文件系统，无 SQLite 镜像）；`link.go` 把 app 管理的 skill 以 symlink 发布进某个 CLI 的 skills 目录（见 `skillsRel`） |
-| `backend/storage/` | SQLite `Open()`，schema 唯一来源（唯一调用 mattn/go-sqlite3 之处） |
+| `backend/storage/` | SQLite `Open()`，schema 唯一来源（唯一调用 `modernc.org/sqlite` 之处） |
 | `backend/credential/` | 上游凭据池：多 Key 选择策略（`session`/`round_robin`/`least_used`/`random`）、运行期健康状态（冷却/永久失效）、遗留单 Key 认领。`pool.go` 管存储与状态，`selector.go` 管策略与会话指纹 |
 | `backend/proxy/` | HTTP `Server`、`Adapter`、OpenAI 线协议类型；`credential_exec.go` 是取 Key + failover 的执行器（`withCredential` 同一家换 Key，`withRoute` 跨提供商换家）；`resolveRoutes` 的同名链在轮转模式下换起点（逐请求轮转，无会话粘性） |
 | `backend/secret/` | `secret.Store` 接口 + macOS Keychain 实现 |

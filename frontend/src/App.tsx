@@ -994,7 +994,7 @@ function RequestLogs({
           </div>
           <small>
             缓存 <TokenValue value={stats.cachedInputTokens} as="span" /> ·
-            缓存率 {cacheRate.toFixed(1)}%
+            缓存命中 {cacheRate.toFixed(1)}%
           </small>
         </div>
         <div className="request-log-stat">
@@ -1526,7 +1526,7 @@ function UsagePanel() {
               <TokenValue value={totals.input} />
             </div>
             <small>
-              缓存 <TokenValue value={totals.cached} as="span" /> · 命中率{" "}
+              缓存 <TokenValue value={totals.cached} as="span" /> · 缓存命中{" "}
               {cacheRate.toFixed(1)}%
             </small>
           </Card.Content>
@@ -1673,7 +1673,7 @@ function UsageStatList({
                 <Tooltip>
                   <Tooltip.Trigger>
                     <span className="usage-token-value">
-                      命中率 {cacheRate.toFixed(0)}%
+                      缓存命中 {cacheRate.toFixed(0)}%
                     </span>
                   </Tooltip.Trigger>
                   <Tooltip.Content>
@@ -1778,31 +1778,47 @@ function Overview({
       <section className="metric-grid">
         {(
           [
-            ["请求总数", num.format(u.requests), Activity, "近 30 天", ""],
+            // 副行不再写口径标注（"全部时间"），改为直接给出该卡片的标题。
+            // 口径依据仍在：Summary() 对 usage_events 做全表聚合、无时间谓词，
+            // 只是这句话不该由每张卡片各写一遍。
+            ["请求总数", num.format(u.requests), Activity, "请求总数", "", ""],
             [
               "输入 Tokens",
-              `${formatTokenCount(u.cachedInputTokens)} / ${formatTokenCount(u.inputTokens)}`,
+              formatTokenCount(u.inputTokens),
               ArrowUpRight,
-              `${cacheRate.toFixed(1)}% 命中`,
+              // 只留裸比例：四个字删掉后这一格与其他三张卡的标题同为短标签，
+              // 说明语义由 tooltip 承载（缓存量 / 输入量），不占行宽。
+              `${cacheRate.toFixed(1)}%`,
               `缓存 ${num.format(u.cachedInputTokens)} / 输入 ${num.format(u.inputTokens)}`,
+              // 裸比例挂在 DOM 里对读屏是无指代对象的数字，补一个不可见的名词。
+              // 它不能并进 sub：sub 要参与宽度计算，多四个字就把断点顶回去。
+              "缓存命中",
             ],
             [
               "输出 Tokens",
               formatTokenCount(u.outputTokens),
               ArrowDownRight,
-              "近 30 天",
+              "输出 Tokens",
               `输出 ${num.format(u.outputTokens)}`,
+              "",
             ],
-            ["成功率", `${u.successRate.toFixed(2)}%`, Radio, "近 30 天", ""],
-          ] as Array<[string, string, LucideIcon, string, string]>
-        ).map(([label, value, Icon, sub, tooltip]) => (
+            ["成功率", `${u.successRate.toFixed(2)}%`, Radio, "成功率", "", ""],
+          ] as Array<[string, string, LucideIcon, string, string, string]>
+        ).map(([label, value, Icon, sub, tooltip, srLabel]) => (
           <Card className="metric" key={label}>
             <Card.Content>
-              <div className="metric-icon">
-                <Icon size={19} />
-              </div>
+              {/* 图标换成数值后已无可见文字承载语义，标题必须留在 DOM 里；
+                  但子标题本身已是卡片标题时（三张卡）不能再放一份，
+                  否则读屏会把同一句话念两遍。
+                  srLabel 是第四张卡的例外：它可见的副标题只剩 "96.2%"，
+                  需要一个不可见的名词补上指代。 */}
+              {sub !== label && (
+                <span className="sr-only">{srLabel || label}</span>
+              )}
               <div className="metric-head">
-                <span>{label}</span>
+                <span className="metric-icon">
+                  <Icon size={19} />
+                </span>
                 {tooltip ? (
                   <Tooltip>
                     <Tooltip.Trigger>
@@ -1813,8 +1829,10 @@ function Overview({
                 ) : (
                   <strong>{value}</strong>
                 )}
+                {/* 窄窗口下这一行会被省略号截断（1280px 四列时约 46px 可用），
+                    title 让截断的内容仍可在悬停时读到。 */}
+                <small title={sub}>{sub}</small>
               </div>
-              <small>{sub}</small>
             </Card.Content>
           </Card>
         ))}
@@ -1895,9 +1913,6 @@ function Overview({
               <span>Model</span>
               <code>{quickStartModel || "暂无可用模型"}</code>
             </div>
-            <Button size="sm" variant="primary" fullWidth>
-              查看接入文档
-            </Button>
           </Card.Content>
         </Card>
       </section>

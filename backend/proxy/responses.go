@@ -187,7 +187,7 @@ func (in responsesRequest) toChat() (Request, *toolPlan, []string) {
 
 	for _, raw := range in.Input {
 		if message, ok := responsesItemToChat(raw, plan); ok {
-			messages = append(messages, message)
+			messages = appendOrMergeToolCall(messages, message)
 		}
 	}
 
@@ -219,6 +219,24 @@ func (in responsesRequest) toChat() (Request, *toolPlan, []string) {
 		out.StreamOptions = map[string]bool{"include_usage": true}
 	}
 	return out, plan, dropped
+}
+
+// appendOrMergeToolCall 把相邻的 assistant tool_calls 合并成一条消息。Codex 的
+// 并行调用在 input 里是多个独立 function_call item，但 Chat 上游要求它们属于同一
+// 条 assistant 消息；否则前一个 assistant 后面还是 assistant，会被判定缺少对应的
+// tool 消息。
+func appendOrMergeToolCall(messages []Message, message Message) []Message {
+	last := len(messages) - 1
+	if last < 0 || message.Role != "assistant" || len(message.ToolCalls) == 0 ||
+		messages[last].Role != "assistant" || len(messages[last].ToolCalls) == 0 {
+		return append(messages, message)
+	}
+	var existing, added []json.RawMessage
+	if json.Unmarshal(messages[last].ToolCalls, &existing) != nil || json.Unmarshal(message.ToolCalls, &added) != nil {
+		return append(messages, message)
+	}
+	messages[last].ToolCalls = json.RawMessage(mustJSON(append(existing, added...)))
+	return messages
 }
 
 // additionalToolsItem 认出 Responses Lite 的 {"type":"additional_tools"} item 并

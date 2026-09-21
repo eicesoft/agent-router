@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // Open creates the private application database. Upstream provider secrets
@@ -27,7 +27,7 @@ func Open() (*sql.DB, error) {
 }
 
 func OpenPath(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", path+"?_foreign_keys=on&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}

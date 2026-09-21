@@ -626,7 +626,6 @@ header [data-slot="button"] {
 .metric [data-slot="card-content"] {
   padding: 15px !important;
 }
-.metric-icon,
 .agent-icon {
   width: 32px;
   height: 32px;
@@ -637,6 +636,16 @@ header [data-slot="button"] {
   color: var(--chip-ink);
   margin-bottom: 10px;
 }
+/* 概览卡片只有一行：图标、紧跟其后的数值、推到最右的子标题。
+   选择器必须写成 .metric .metric-icon：下面 .metric span 的权重是 (0,1,1)，
+   直接写 .metric-icon（0,1,0）会被它的 display/font-size/color 覆盖。
+   图标不再带底框——一行里的图标着色块会把数值挤偏，且实心块在单行里过重。 */
+.metric .metric-icon {
+  display: grid;
+  place-items: center;
+  color: var(--chip-ink);
+  flex-shrink: 0;
+}
 .metric span {
   display: block;
   color: var(--muted-3);
@@ -644,41 +653,106 @@ header [data-slot="button"] {
 }
 .metric-head {
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  /* 6px 而非 8px：四列布局下每张卡的可视宽度是副标题能否完整显示的瓶颈，
+     省下的 4px 直接决定断点能往低压多少。 */
+  gap: 6px;
 }
-.metric-head > span {
+.metric-head > .tooltip__trigger {
+  display: inline-flex;
+  align-items: center;
+}
+/* 无 tooltip 的卡片里 strong 是 .metric-head 的直接子元素；有 tooltip 的卡片
+   （输入/输出 Tokens）的 strong 被 .tooltip__trigger 包住，所以这里不能写
+   子选择器，否则恰恰是长数值的那张卡漏掉约束。
+   flex-shrink: 0 是必需的：flex 项目默认可以被压到比内容窄，数值会被逐字
+   折行（基线在 1180px 下把 "418.7M / 435.4M" 挤成三行）。 */
+.metric-head strong {
+  /* 数值永远单行：它属于卡片基线，折行会把这张卡顶高、和同排卡片错位
+     （输入 Tokens 曾用 "缓存 / 输入" 双值拼接触发过）。 */
   white-space: nowrap;
-  color: var(--ink-heading);
-  font-size: 24px;
-  font-weight: 600;
-  letter-spacing: -0.045em;
+  flex-shrink: 0;
 }
-.metric .metric-head > strong {
-  margin: 4px 0;
-  color: var(--muted-3);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0;
-}
+/* 无 tooltip 卡片的数值兜底。概览网格由下方 .metric-grid 规则覆盖成 11px，
+   但 usage 页与请求日志页的 .metric 里 strong 没有更具体的选择器命中，
+   这条 24px 是它们的唯一来源。 */
 .metric strong {
   display: block;
   color: var(--ink-heading);
   font-size: 24px;
   letter-spacing: -0.045em;
-  margin: 4px 0;
 }
 .metric-token-value {
-  font-size: 11px !important;
-  font-weight: 500 !important;
-  letter-spacing: 0 !important;
-  color: var(--muted-3) !important;
   cursor: help;
 }
+/* 子标题推到行尾，字号刻意小于卡片外的 11px 副行基线：它是这一行里唯一的
+   说明性文字，压在数值同一基线上时不能与之争视觉重量。 */
 .metric small {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--faint-3);
-  font-size: 10px;
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+/* 概览网格里这一行是反过来的：行尾的子标题才是卡片标题（大、深色、半粗），
+   紧邻图标的数值反而是小号说明体。取值与工具页 token 卡同层级
+   （.usage-token-head 的 22px/600 深色标题 + 11px/500 灰色数值）。
+   上面那条 .metric small 基准必须保留：usage 页与请求日志页复用 .metric
+   承载块级副行，把基准直接改写成网格专属会把它们的 9.5px 灰色一起弄丢。 */
+.metric-grid .metric-head strong,
+.metric-grid .metric-token-value {
+  margin: 0;
+  color: var(--muted-3);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+/* 17px 是上一轮按"缓存命中 96.2%"占满四列可用宽度反推的上限；那四个字删掉
+   后瓶颈换成"输出 Tokens"（88px），该卡在 1440px 下仍有约 38px 余量，
+   因此 17px 已不再是硬上限，只是当前的取值。 */
+.metric-grid .metric small {
+  color: var(--ink-heading);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.045em;
+}
+/* 单行 = 图标 + 数值 + 子标题。四列能否成立取决于最宽的那一行：副标题里
+   最宽的是"输出 Tokens"（87.7px），输入卡在"缓存命中"四字删掉后只剩裸比例
+   "96.2%"，早已不是瓶颈，瓶颈交给了最宽的数值。
+   强制四列后逐档实测（注入 4,294,967,296 / 1,234,500M 这类极端值）：
+
+     视口    该行可用   最宽行需要   余量
+     1600      236        174.9      +61.1
+     1440      196        174.9      +21.1
+     1366      178        174.9       +3.1
+     1360      176        174.9       +1.1
+     1340      171        174.9       -3.9   ← 开始截断
+
+   可用宽度按 0.25px/px 随视口线性放大（四列均分），故四列的硬下限约 1356px。
+   断点取 1360：1366 档保住四列（主流笔记本），1280 档落到两列。
+   取 1320 是不够的——那里只有 166px，9 位数请求数（168）与 "999,999M"
+   （174.5）都会溢出。代价是 1361 起仅 1.1~3px 余量，且这是 macOS 字体
+   度量下的实测值，换平台字体需重测。
+   降到两列而不是让副标题折行：折行会把卡片顶高几十像素，单行布局本身
+   才是这张卡的形态。 */
+@media (max-width: 1360px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(140px, 1fr));
+  }
+}
+/* 数值换成图标之后语义只剩图标，卡片标题留在 DOM 里给读屏。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .two-col {
   display: grid;

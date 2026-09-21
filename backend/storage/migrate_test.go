@@ -13,7 +13,7 @@ import (
 // 重开库不重复迁移也不报错。
 func TestMigrateDropsClientModelUnique(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "router.db")
-	raw, err := sql.Open("sqlite3", path)
+	raw, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}

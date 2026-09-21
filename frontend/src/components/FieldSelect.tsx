@@ -42,6 +42,8 @@ export function FieldSelect<T extends string>({
     : (options ?? []);
   const item = (option: SelectOption<T>) => (
     <ListBox.Item
+      // 列表项必须自带 key：分组分支直接 map 渲染，缺 key 时 React 会告警。
+      key={option.value}
       id={option.value}
       textValue={typeof option.label === "string" ? option.label : option.value}
     >

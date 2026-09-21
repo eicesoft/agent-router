@@ -279,6 +279,50 @@ func TestResponsesConvertsRequestAndNonStreamingReply(t *testing.T) {
 	}
 }
 
+// Codex 的并行调用在 input 里是多条独立 function_call，但 Chat 上游要求同一轮
+// 调用合成一条 assistant tool_calls，再接完整数量的 tool 消息。拆成多条 assistant
+// 会让 DeepSeek 等上游报 insufficient tool messages。
+func TestResponsesMergesParallelToolCalls(t *testing.T) {
+	s, _, captured := responsesFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+	})
+
+	payload := `{
+		"model":"codex-model",
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"check"}]},
+			{"type":"function_call","name":"shell","arguments":"{\"command\":\"ls\"}","call_id":"call_1"},
+			{"type":"function_call","name":"shell","arguments":"{\"command\":\"pwd\"}","call_id":"call_2"},
+			{"type":"function_call_output","call_id":"call_1","output":"a.txt"},
+			{"type":"function_call_output","call_id":"call_2","output":"/tmp"}
+		],
+		"tools":[{"type":"function","name":"shell","description":"run","parameters":{"type":"object","properties":{}}}],
+		"stream":false
+	}`
+	response := postResponses(t, s, payload)
+	if response.Code != 200 {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	var sent Request
+	if err := json.Unmarshal([]byte(*captured), &sent); err != nil {
+		t.Fatalf("upstream body = %s: %v", *captured, err)
+	}
+	if len(sent.Messages) != 4 {
+		t.Fatalf("messages = %+v", sent.Messages)
+	}
+	if sent.Messages[1].Role != "assistant" || !strings.Contains(string(sent.Messages[1].ToolCalls), `"call_1"`) || !strings.Contains(string(sent.Messages[1].ToolCalls), `"call_2"`) {
+		t.Fatalf("parallel calls not merged: %+v", sent.Messages[1])
+	}
+	if sent.Messages[2].Role != "tool" || sent.Messages[2].ToolCallID != "call_1" {
+		t.Fatalf("first tool result = %+v", sent.Messages[2])
+	}
+	if sent.Messages[3].Role != "tool" || sent.Messages[3].ToolCallID != "call_2" {
+		t.Fatalf("second tool result = %+v", sent.Messages[3])
+	}
+}
+
 // Codex 的 item 状态机要求正文 delta 归属一个已宣告的 item：没有先发
 // output_item.added 就发 delta，它会报「OutputTextDelta without active item」并把
 // delta 丢掉，流式逐字显示失效（只剩收尾那份完整内容兜底）。这个缺陷单测本来测不
