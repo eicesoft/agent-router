@@ -279,6 +279,53 @@ func TestListModelsReturnsOnlyRoutableMappings(t *testing.T) {
 	}
 }
 
+func TestEffectiveMappingsKeepsAliasesFromFailoverChain(t *testing.T) {
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry, err := provider.NewRegistry(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []provider.Provider{
+		{ID: "primary", Name: "Primary", BaseURL: "https://primary.example.com", Enabled: true},
+		{ID: "backup", Name: "Backup", BaseURL: "https://backup.example.com", Enabled: true},
+	} {
+		if _, err := registry.Save(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mappings, err := config.NewMappingStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mapping := range []config.ModelMapping{
+		{ID: "a-primary-route", ClientModel: "shared-model", ProviderID: "primary", UpstreamModel: "primary-model", Enabled: true},
+		{ID: "z-backup-route", ClientModel: "shared-model", ProviderID: "backup", UpstreamModel: "backup-model", Aliases: []string{"codex-alias"}, Enabled: true},
+	} {
+		if _, err := mappings.Save(mapping); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s := newTestServer(db, registry, mappings, fakeSecrets{}, usage.NewSQLiteTracker(db), fakeKeys{})
+	var got *config.ModelMapping
+	for _, mapping := range s.EffectiveMappings() {
+		if mapping.ClientModel == "shared-model" {
+			got = &mapping
+			break
+		}
+	}
+	if got == nil {
+		t.Fatal("shared-model missing from effective mappings")
+	}
+	if got.ProviderID != "primary" || len(got.Aliases) != 1 || got.Aliases[0] != "codex-alias" {
+		t.Fatalf("effective mapping = %+v, want primary route carrying the backup alias", got)
+	}
+}
+
 func TestLocalKeyIsRequired(t *testing.T) {
 	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
 	if err != nil {

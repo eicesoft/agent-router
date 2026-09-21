@@ -269,6 +269,14 @@ func TestWriteBacksUp(t *testing.T) {
 	if !strings.Contains(string(written), "ANTHROPIC_BASE_URL") {
 		t.Errorf("merged config missing gateway env:\n%s", written)
 	}
+
+	if _, err := g.Write(tool); err != nil {
+		t.Fatal(err)
+	}
+	backups, err = filepath.Glob(target + ".*")
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("unchanged rewrite added a backup: %v (err %v)", backups, err)
+	}
 }
 
 // TestParseDocJSONC verifies .jsonc configs (kilo, mimocode) parse despite

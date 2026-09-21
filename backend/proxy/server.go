@@ -195,17 +195,36 @@ func (s *Server) EffectiveMappings() []config.ModelMapping {
 	out := make([]config.ModelMapping, 0, len(s.effectiveMappings()))
 	// 同名多路由对外只暴露一个客户端模型名：/v1/models 与生成的 CLI 配置列的是「网关
 	// 能路由哪些名字」，一条名字背后有几家提供商做 failover 是内部细节。
-	seen := make(map[string]struct{})
+	seen := make(map[string]int)
 	for _, mapping := range s.effectiveMappings() {
 		if _, ok := s.registry.Get(mapping.ProviderID); ok {
-			if _, dup := seen[mapping.ClientModel]; dup {
+			if i, dup := seen[mapping.ClientModel]; dup {
+				out[i].Aliases = appendUnique(out[i].Aliases, mapping.Aliases...)
 				continue
 			}
-			seen[mapping.ClientModel] = struct{}{}
+			seen[mapping.ClientModel] = len(out)
 			out = append(out, mapping)
 		}
 	}
 	return out
+}
+
+// appendUnique 保留同名 failover 链上每条路由的别名，供 Codex 目录和 profile
+// 使用；别名本身仍不会出现在对外模型列表里。
+func appendUnique(names []string, extra ...string) []string {
+	for _, name := range extra {
+		found := false
+		for _, existing := range names {
+			if existing == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // listModels exposes the currently routable client model names in the OpenAI

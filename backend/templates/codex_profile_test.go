@@ -107,6 +107,64 @@ func codexGenWith(models ...string) *Generator {
 	return NewGenerator("http://127.0.0.1:9400", "agent-router", list)
 }
 
+// Codex 面板的四个固定名字必须以别名本身生成 profile，而不是映射的正名。
+func TestCodexProfilesUseAliases(t *testing.T) {
+	tool, dir := writableCodexTool(t)
+	g := codexGenWith("Ybl/deepseek-v4.1-flash").
+		WithCatalogAliases(map[string][]string{
+			"Ybl/deepseek-v4.1-flash": {"gpt-5.6-luna"},
+		})
+	preview := g.ProfilesPreview(tool)
+	if len(preview) != 1 {
+		t.Fatalf("preview = %+v", preview)
+	}
+	if preview[0].Name != "gpt-5-6-luna" || preview[0].Model != "gpt-5.6-luna" {
+		t.Fatalf("preview = %+v", preview[0])
+	}
+	if _, err := g.Write(tool); err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Model string `toml:"model"`
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "gpt-5-6-luna.config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := toml.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Model != "gpt-5.6-luna" {
+		t.Fatalf("profile model = %q, want gpt-5.6-luna", parsed.Model)
+	}
+}
+
+// 固定别名必须优先拿到消毒后的规范 profile 名；否则普通同名路由会先占用
+// gpt-5-6-sol，别名被挤成 gpt-5-6-sol-2，磁盘上看起来就像 luna 没生成。
+func TestCodexProfileAliasWinsNameCollision(t *testing.T) {
+	tool, _ := writableCodexTool(t)
+	g := codexGenWith("gpt-5.6-sol", "gpt-5-6-sol").
+		WithCatalogAliases(map[string][]string{
+			"gpt-5-6-sol": {"gpt-5.6-sol"},
+		})
+
+	plan := g.codexProfilePlan()
+	if len(plan) != 2 {
+		t.Fatalf("plan = %+v, want alias and remaining model", plan)
+	}
+	if plan[0].Name != "gpt-5-6-sol" || plan[0].Model != "gpt-5.6-sol" {
+		t.Fatalf("alias profile = %+v, want canonical gpt-5-6-sol", plan[0])
+	}
+	if plan[1].Name != "gpt-5-6-sol-2" || plan[1].Model != "gpt-5-6-sol" {
+		t.Fatalf("colliding model profile = %+v, want suffixed name", plan[1])
+	}
+
+	preview := g.ProfilesPreview(tool)
+	if len(preview) != 1 || preview[0].Name != "gpt-5-6-sol" || preview[0].Model != "gpt-5.6-sol" {
+		t.Fatalf("preview = %+v, want the alias on the canonical profile", preview)
+	}
+}
+
 // 一次写盘要同时产出主配置与每个选中模型一份 profile，用户不必手工建文件。
 // 必须显式选中：默认不再全选（见 TestCodexProfileDefaultIsNotAll）。
 func TestWriteCodexWritesProfiles(t *testing.T) {

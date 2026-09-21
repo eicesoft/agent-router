@@ -2524,6 +2524,49 @@ code {
 .slot-grid [data-slot="select"] {
   min-width: 0;
 }
+.codex-alias-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.codex-alias-select {
+  width: 100%;
+  min-width: 0;
+}
+.field-select-tooltip-anchor {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+.codex-alias-select [data-slot="select-trigger"],
+.codex-alias-select [data-slot="autocomplete-trigger"] {
+  min-width: 0;
+}
+.codex-alias-select [data-slot="select-value"],
+.codex-alias-select [data-slot="autocomplete-value"] {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.codex-alias-select-popover .list-box-item > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.field-select-option-trigger,
+.field-select-option-label {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.field-select-tooltip {
+  max-width: min(520px, calc(100vw - 32px));
+  overflow-wrap: anywhere;
+}
 .agent-config-dialog {
   max-width: 960px;
 }

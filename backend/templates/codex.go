@@ -70,6 +70,14 @@ const codexProviderDisplayName = "Agent Router"
 // `--profile work` loads `$CODEX_HOME/work.config.toml`.
 const codexProfileExt = ".config.toml"
 
+// Codex 接入面板固定维护这四个别名；它们的正名可以是任意已配置映射。
+var codexModelAliases = []string{
+	"gpt-5.6-luna",
+	"gpt-5.6-terra",
+	"gpt-5.6-sol",
+	"gpt-6-astra",
+}
+
 // codexProfile is one generated `--profile` entry: the sanitized name Codex
 // accepts on the command line and the client model it selects.
 type codexProfile struct {
@@ -155,13 +163,28 @@ func codexProfilePath(configPath, name string) string {
 	return filepath.Join(filepath.Dir(configPath), name+codexProfileExt)
 }
 
-// codexProfilePlan 为每个可路由模型算好 profile 名字。
+// codexProfilePlan 为每个可路由模型算好 profile 名字。固定别名先入列，保证
+// gpt-5.6-sol 这类名字在存在同名普通路由时仍拿到规范的 profile 名，而不是
+// 退成 gpt-5-6-sol-2；随后跳过同名模型，避免同一 profile 模型重复出现。
 //
 // 名字必须在**全量**可路由列表上去重，不能按选中子集算：折换有损时（"a/b" 与 "a-b"
 // 都折成 "a-b"），输入列表不同会让同一个模型拿到不同的文件名——用户改一次勾选，
 // 磁盘上就多出一份指向同一模型的重复 profile。
 func (g *Generator) codexProfilePlan() []codexProfile {
-	return codexProfiles(g.routable)
+	aliases := g.codexCatalogAliases()
+	aliasIDs := make(map[string]struct{}, len(aliases))
+	models := make([]Model, 0, len(aliases)+len(g.routable))
+	for _, alias := range aliases {
+		aliasIDs[alias.ID] = struct{}{}
+		models = append(models, alias)
+	}
+	for _, model := range g.routable {
+		if _, ok := aliasIDs[model.ID]; ok {
+			continue
+		}
+		models = append(models, model)
+	}
+	return codexProfiles(models)
 }
 
 // codexProfileIsOurs 判断磁盘上那份 profile 是不是本网关生成的。靠内容而非文件名：
@@ -192,6 +215,11 @@ func (g *Generator) codexProfileIsOurs(t Tool, p codexProfile) bool {
 //
 // 用户显式勾过（selected 非 nil）就完全按勾选来，包括清空——那是有意的「不再生成」。
 func (g *Generator) codexProfileModels(t Tool) []Model {
+	if t.Shape == "codex-toml" {
+		if aliases := g.codexCatalogAliases(); len(aliases) > 0 {
+			return aliases
+		}
+	}
 	if g.selected != nil {
 		return g.models()
 	}

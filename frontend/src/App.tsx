@@ -452,6 +452,37 @@ export default function App() {
       ].sort((a, b) => a.clientModel.localeCompare(b.clientModel)),
     });
   };
+  const assignCodexAlias = async (alias: string, mappingID: string | null) => {
+    const target = mappingID
+      ? ensuredMappings.find((item) => item.id === mappingID)
+      : null;
+    if (mappingID && !target) throw new Error("选择的映射不存在");
+    const changed = new Map<string, ModelMapping>();
+    for (const mapping of ensuredMappings) {
+      if (mapping.id === mappingID && target) {
+        changed.set(mapping.id, {
+          ...mapping,
+          aliases: [...mapping.aliases.filter((name) => name !== alias), alias],
+        });
+      } else if (mapping.aliases.includes(alias)) {
+        changed.set(mapping.id, {
+          ...mapping,
+          aliases: mapping.aliases.filter((name) => name !== alias),
+        });
+      }
+    }
+    const saved = await Promise.all(
+      [...changed.values()].map((mapping) => saveModelMapping(mapping)),
+    );
+    const replaced = new Set(saved.map((mapping) => mapping.id));
+    setData({
+      ...data,
+      mappings: [
+        ...data.mappings.filter((mapping) => !replaced.has(mapping.id)),
+        ...saved,
+      ].sort((a, b) => a.clientModel.localeCompare(b.clientModel)),
+    });
+  };
   // 链策略只影响「先打哪家」，不改变链的成员，所以本地只更新 chainModes 映射，
   // 不重排 mappings。写失败时把旧值放回去，避免 UI 显示已生效而网关没变。
   const setMappingChainMode = async (clientModel: string, mode: ChainMode) => {
@@ -683,7 +714,11 @@ export default function App() {
               }
             />
           ) : (
-            <AgentTemplates />
+            <AgentTemplates
+              mappings={ensuredMappings}
+              providers={data.providers}
+              onAssignCodexAlias={assignCodexAlias}
+            />
           )}
         </div>
       </main>
@@ -2538,8 +2573,25 @@ const toolIcons: Record<string, string> = {
   claude: claudeIcon,
   omp: ompIcon,
 };
+const CODEX_MODEL_ALIASES = [
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "gpt-6-astra",
+];
 
-function AgentTemplates() {
+function AgentTemplates({
+  mappings,
+  providers,
+  onAssignCodexAlias,
+}: {
+  mappings: ModelMapping[];
+  providers: Provider[];
+  onAssignCodexAlias: (
+    alias: string,
+    mappingID: string | null,
+  ) => Promise<void>;
+}) {
   const [previews, setPreviews] = useState<ToolPreview[] | null>(null);
   const [configuringId, setConfiguringId] = useState<string | null>(null);
   const [skillsToolId, setSkillsToolId] = useState<string | null>(null);
@@ -2549,6 +2601,7 @@ function AgentTemplates() {
   const [configTab, setConfigTab] = useState("models");
   const [writingId, setWritingId] = useState<string | null>(null);
   const [written, setWritten] = useState<string | null>(null);
+  const [aliasError, setAliasError] = useState<string | null>(null);
   // toolId -> slotKey -> modelId: explicit slot selections layered over the
   // catalog's automatic defaults ("" clears a slot).
   const [overrides, setOverrides] = useState<
@@ -2611,6 +2664,8 @@ function AgentTemplates() {
     modelOverrides[tool.id] ??
     tool.selectedModels ??
     tool.routable.map((m) => m.id);
+  const providerName = (id: string) =>
+    providers.find((provider) => provider.id === id)?.name ?? id;
   const applyRender = async (
     toolId: string,
     slotModels: Record<string, string>,
@@ -2659,6 +2714,15 @@ function AgentTemplates() {
       : base.filter((id) => id !== modelId);
     setModelOverrides((o) => ({ ...o, [toolId]: next }));
     await applyRender(toolId, effectiveSlots(tool), next);
+  };
+  const setCodexAlias = async (alias: string, mappingID: string | null) => {
+    setAliasError(null);
+    try {
+      await onAssignCodexAlias(alias, mappingID);
+      setPreviews(await listToolTemplates());
+    } catch (err) {
+      setAliasError(err instanceof Error ? err.message : String(err));
+    }
   };
   const write = async (id: string) => {
     setWritingId(id);
@@ -2821,6 +2885,7 @@ function AgentTemplates() {
                                   label={slot.label}
                                   placeholder="自动"
                                   isClearable
+                                  isSearchable
                                   value={value || null}
                                   onChange={(key) =>
                                     void setSlot(
@@ -2838,29 +2903,70 @@ function AgentTemplates() {
                             })}
                           </div>
                         )}
-                      {configuring && configuring.multiProvider && (
-                        <div className="model-select-list">
-                          {configuring.routable.map((m) => {
-                            const checked = selectedModels(
-                              configuring,
-                            ).includes(m.id);
+                      {configuring &&
+                        configuring.multiProvider &&
+                        configuring.id !== "codex" && (
+                          <div className="model-select-list">
+                            {configuring.routable.map((m) => {
+                              const checked = selectedModels(
+                                configuring,
+                              ).includes(m.id);
+                              return (
+                                <Checkbox
+                                  key={m.id}
+                                  isSelected={checked}
+                                  onChange={(on) =>
+                                    void toggleModel(configuring.id, m.id, on)
+                                  }
+                                >
+                                  <Checkbox.Content>
+                                    <Checkbox.Control>
+                                      <Checkbox.Indicator />
+                                    </Checkbox.Control>
+                                    {m.name || m.id}
+                                  </Checkbox.Content>
+                                </Checkbox>
+                              );
+                            })}
+                          </div>
+                        )}
+                      {configuring && configuring.id === "codex" && (
+                        <div className="slot-grid codex-alias-grid">
+                          {CODEX_MODEL_ALIASES.map((alias) => {
+                            const current = mappings.find((mapping) =>
+                              mapping.aliases.includes(alias),
+                            );
+                            const options = mappings.filter(
+                              (mapping) =>
+                                mapping.enabled || mapping.id === current?.id,
+                            );
                             return (
-                              <Checkbox
-                                key={m.id}
-                                isSelected={checked}
-                                onChange={(on) =>
-                                  void toggleModel(configuring.id, m.id, on)
+                              <FieldSelect
+                                key={alias}
+                                className="codex-alias-select"
+                                label={alias}
+                                placeholder="选择映射模型"
+                                isClearable
+                                isSearchable
+                                popoverClassName="codex-alias-select-popover"
+                                value={current?.id ?? null}
+                                onChange={(key) =>
+                                  void setCodexAlias(alias, key)
                                 }
-                              >
-                                <Checkbox.Content>
-                                  <Checkbox.Control>
-                                    <Checkbox.Indicator />
-                                  </Checkbox.Control>
-                                  {m.name || m.id}
-                                </Checkbox.Content>
-                              </Checkbox>
+                                options={options.map((mapping) => ({
+                                  value: mapping.id,
+                                  label: `${mapping.clientModel} · ${providerName(
+                                    mapping.providerId,
+                                  )} → ${mapping.upstreamModel}`,
+                                }))}
+                              />
                             );
                           })}
+                          {aliasError && (
+                            <p className="mapping-save-error" role="alert">
+                              {aliasError}
+                            </p>
+                          )}
                         </div>
                       )}
                       {configuring &&

@@ -317,14 +317,16 @@ func (g *Generator) Write(t Tool) (string, error) {
 	return t.Config, nil
 }
 
-// writeWithBackup writes content after moving any existing file aside as
-// "<filename>.<yyyyMMddHHmmss>". A mistaken merge stays recoverable, which
-// matters most for the config files a user did not create with this app.
+// writeWithBackup skips unchanged content. It backs up a changed existing file
+// as "<filename>.<yyyyMMddHHmmss>" so a mistaken merge stays recoverable.
 func writeWithBackup(path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	if data, err := os.ReadFile(path); err == nil {
+		if bytes.Equal(data, []byte(content)) {
+			return nil
+		}
 		backupPath := path + "." + time.Now().Format("20060102150405")
 		if err := os.WriteFile(backupPath, data, 0o644); err != nil {
 			return err

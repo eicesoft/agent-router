@@ -152,7 +152,27 @@ func (g *Generator) codexCatalogModels(t Tool) []Model {
 	if t.Shape != "codex-toml" {
 		return nil
 	}
+	if aliases := g.codexCatalogAliases(); len(aliases) > 0 {
+		return aliases
+	}
 	return g.codexProfileModels(t)
+}
+
+// codexCatalogAliases 返回已经挂到某条可路由映射上的 Codex 固定别名。
+// 别名不进 g.routable，但 Codex 的 profile 与目录都必须用别名本身作为 model。
+func (g *Generator) codexCatalogAliases() []Model {
+	out := make([]Model, 0, len(codexModelAliases))
+	for _, alias := range codexModelAliases {
+		for _, m := range g.routable {
+			for _, name := range g.catalogAliases[m.ID] {
+				if name == alias {
+					out = append(out, Model{ID: alias, Name: alias})
+					break
+				}
+			}
+		}
+	}
+	return out
 }
 
 // CodexCatalog 渲染 Codex 的模型目录内容。ok 为 false 表示这台机器上找不到可用的模板
