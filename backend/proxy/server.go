@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -272,7 +273,10 @@ func (s *Server) effectiveMappings() []config.ModelMapping {
 	for _, mapping := range stored {
 		byRoute[mapping.ProviderID+"\x00"+mapping.UpstreamModel] = mapping
 		p, ok := s.registry.Get(mapping.ProviderID)
-		if !mapping.Enabled || !ok || !p.Enabled {
+		// 保存行还必须落在提供商当前勾选的模型里：上游模型被取消勾选后，这条
+		// 路由既不该再被 /v1/models 与 Agent 配置清单列出，也不该继续路由——
+		// 否则映射页已经看不见它（那页按 p.Models 分组），它却还活着。
+		if !mapping.Enabled || !ok || !p.Enabled || !slices.Contains(p.Models, mapping.UpstreamModel) {
 			continue
 		}
 		models = append(models, mapping)

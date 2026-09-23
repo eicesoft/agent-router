@@ -33,7 +33,7 @@ func TestE2EMaskEndToEnd(t *testing.T) {
 	}
 	defer db.Close()
 	registry, _ := provider.NewRegistry(db)
-	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, Enabled: true}); err != nil {
+	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, Models: []string{"upstream-model"}, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	mappings, _ := config.NewMappingStore(db)

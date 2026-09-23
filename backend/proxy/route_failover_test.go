@@ -33,8 +33,8 @@ func chainTestServer(t *testing.T, primaryURL, backupURL string) (*Server, *sql.
 		t.Fatal(err)
 	}
 	for _, p := range []provider.Provider{
-		{ID: "primary", Name: "Primary", Kind: provider.KindCompatible, BaseURL: primaryURL, Enabled: true},
-		{ID: "backup", Name: "Backup", Kind: provider.KindCompatible, BaseURL: backupURL, Enabled: true},
+		{ID: "primary", Name: "Primary", Kind: provider.KindCompatible, BaseURL: primaryURL, Models: []string{"gpt-4.1-primary"}, Enabled: true},
+		{ID: "backup", Name: "Backup", Kind: provider.KindCompatible, BaseURL: backupURL, Models: []string{"gpt-4.1-backup"}, Enabled: true},
 	} {
 		if _, err := registry.Save(p); err != nil {
 			t.Fatal(err)
@@ -244,8 +244,8 @@ func anthropicChainTestServer(t *testing.T, primaryURL, backupURL string) (*Serv
 		t.Fatal(err)
 	}
 	for _, p := range []provider.Provider{
-		{ID: "primary", Name: "Primary", Kind: provider.KindAnthropic, BaseURL: primaryURL, Enabled: true},
-		{ID: "backup", Name: "Backup", Kind: provider.KindAnthropic, BaseURL: backupURL, Enabled: true},
+		{ID: "primary", Name: "Primary", Kind: provider.KindAnthropic, BaseURL: primaryURL, Models: []string{"claude-x-primary"}, Enabled: true},
+		{ID: "backup", Name: "Backup", Kind: provider.KindAnthropic, BaseURL: backupURL, Models: []string{"claude-x-backup"}, Enabled: true},
 	} {
 		if _, err := registry.Save(p); err != nil {
 			t.Fatal(err)

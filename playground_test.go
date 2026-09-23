@@ -68,7 +68,7 @@ func newTestApp(t *testing.T, upstream http.Handler) (*App, *[]PlaygroundChunk) 
 	}
 	if _, err := registry.Save(provider.Provider{
 		ID: "test", Name: "Test", Kind: provider.KindCompatible,
-		BaseURL: server.URL, APIKeyRef: "provider/test", Enabled: true,
+		BaseURL: server.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true,
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -354,7 +354,12 @@ export default function App() {
     for (const m of mappings) {
       byRoute[`${m.providerId}\u0000${m.upstreamModel}`] = true;
     }
-    const merged = [...mappings];
+    // 与后端 effectiveMappings 同一规则：上游已取消勾选的保存行（不在 p.models
+    // 里）不再可路由，不能继续作为候选模型出现在 Playground / 日志筛选里。
+    const merged = mappings.filter((m) => {
+      const p = providers.find((item) => item.id === m.providerId);
+      return !!p && p.models.includes(m.upstreamModel);
+    });
     for (const auto of deriveAutoMappings(providers)) {
       if (byRoute[`${auto.providerId}\u0000${auto.upstreamModel}`]) continue;
       merged.push(auto);

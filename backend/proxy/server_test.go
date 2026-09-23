@@ -96,7 +96,7 @@ func TestChatCompletionsMapsAndForwardsCompatibleRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true})
+	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestChatCompletionsRoutesAliasToUpstreamModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true}); err != nil {
+	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	mappings, err := config.NewMappingStore(db)
@@ -212,7 +212,7 @@ func TestListModelsReturnsOnlyRoutableMappings(t *testing.T) {
 	if _, err := registry.Save(provider.Provider{ID: "enabled", Name: "Enabled", BaseURL: "https://example.com", ModelPrefix: "local", Models: []string{"automatic-model", "edited-upstream", "disabled-upstream"}, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.Save(provider.Provider{ID: "disabled", Name: "Disabled", BaseURL: "https://example.org", Enabled: false}); err != nil {
+	if _, err := registry.Save(provider.Provider{ID: "disabled", Name: "Disabled", BaseURL: "https://example.org", Models: []string{"upstream-model"}, Enabled: false}); err != nil {
 		t.Fatal(err)
 	}
 	mappings, err := config.NewMappingStore(db)
@@ -290,8 +290,8 @@ func TestEffectiveMappingsKeepsAliasesFromFailoverChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []provider.Provider{
-		{ID: "primary", Name: "Primary", BaseURL: "https://primary.example.com", Enabled: true},
-		{ID: "backup", Name: "Backup", BaseURL: "https://backup.example.com", Enabled: true},
+		{ID: "primary", Name: "Primary", BaseURL: "https://primary.example.com", Models: []string{"primary-model"}, Enabled: true},
+		{ID: "backup", Name: "Backup", BaseURL: "https://backup.example.com", Models: []string{"backup-model"}, Enabled: true},
 	} {
 		if _, err := registry.Save(p); err != nil {
 			t.Fatal(err)
@@ -387,7 +387,7 @@ func TestAnthropicConversionEscapesTextAndReshapesTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true})
+	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +478,7 @@ func TestChatCompletionsForwardsToolParameters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true})
+	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +555,7 @@ func TestAnthropicToolHistoryBecomesOpenAIToolMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true})
+	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -790,7 +790,7 @@ func TestChatCompletionsForwardsThinkingParameters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true}); err != nil {
+	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	mappings, err := config.NewMappingStore(db)
@@ -862,7 +862,7 @@ func TestMessagesHandlerForwardsAndMapsThinking(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.Kind(kind), BaseURL: baseURL, APIKeyRef: "provider/test", Enabled: true}); err != nil {
+		if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.Kind(kind), BaseURL: baseURL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true}); err != nil {
 			t.Fatal(err)
 		}
 		mappings, err := config.NewMappingStore(db)
@@ -982,7 +982,7 @@ func TestTruncatedUpstreamStreamIsLoggedAsFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true})
+	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1196,7 +1196,7 @@ func TestStalledUpstreamStreamIsUnwedgedAndLogged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true}); err != nil {
+	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	mappings, err := config.NewMappingStore(db)
@@ -1264,7 +1264,7 @@ func TestSmallMaxTokensSkipsReasoningEffortAndGetsFloor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: openAIUpstream.URL, APIKeyRef: "provider/test", Enabled: true}); err != nil {
+	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: openAIUpstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	mappings, err := config.NewMappingStore(db)
@@ -1332,7 +1332,7 @@ func TestAnthropicAdapterCarriesSamplingToolsAndThinking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindAnthropic, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true}); err != nil {
+	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindAnthropic, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	mappings, err := config.NewMappingStore(db)
@@ -1441,7 +1441,7 @@ func TestAnthropicPassthroughLogsTokenUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindAnthropic, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true})
+	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindAnthropic, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1509,7 +1509,7 @@ func TestStreamingAnthropicToOpenAIRequestsAndReportsTokenUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true})
+	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1621,7 +1621,7 @@ func TestStreamingAnthropicUpstreamBecomesOpenAIChunks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindAnthropic, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true})
+	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindAnthropic, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1717,7 +1717,7 @@ func TestLargeRequestBodyIsForwardedAndOversizeIsExplained(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true})
+	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -29,7 +29,7 @@ func pooledTestServer(t *testing.T, upstream *httptest.Server, keys map[string]s
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Enabled: true}); err != nil {
+	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	mappings, err := config.NewMappingStore(db)
@@ -279,7 +279,7 @@ func TestPassthroughUsesPoolAndLogsCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindAnthropic, BaseURL: upstream.URL, Enabled: true}); err != nil {
+	if _, err := registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindAnthropic, BaseURL: upstream.URL, Models: []string{"upstream-model"}, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	mappings, err := config.NewMappingStore(db)
