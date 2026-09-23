@@ -64,6 +64,45 @@ function groupModels(models: AvailableModel[]) {
   );
 }
 
+function parseModelIds(raw: string): string[] {
+  return Array.from(
+    new Set(
+      raw
+        .split(",")
+        .map((model) => model.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function mergeCatalog(
+  catalog: AvailableModel[],
+  ids: string[],
+): AvailableModel[] {
+  const known = new Set(catalog.map((model) => model.id));
+  const extras = ids.filter((id) => !known.has(id));
+  return extras.length
+    ? [...catalog, ...extras.map((id) => ({ id, created: 0 }))]
+    : catalog;
+}
+
+// 手动填写的模型名必须同时进目录与勾选：勾选列表由目录渲染，名字不在
+// 目录里的话，下一次勾选或刷新就会把它从 form.models 里冲掉。
+function withManualModels(
+  current: ProviderFormState,
+  raw: string,
+): ProviderFormState {
+  const names = parseModelIds(raw);
+  if (!names.length) return current;
+  const selected = new Set(parseModelIds(current.models));
+  for (const id of names) selected.add(id);
+  return {
+    ...current,
+    availableModels: mergeCatalog(current.availableModels, names),
+    models: Array.from(selected).join(", "),
+  };
+}
+
 export function ProviderDrawer({
   provider,
   isOpen,
@@ -104,14 +143,12 @@ export function ProviderDrawer({
   const [saving, setSaving] = useState(false);
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelError, setModelError] = useState("");
+  const [manualModelInput, setManualModelInput] = useState("");
   const change = (
     key: Exclude<keyof ProviderFormState, "availableModels">,
     value: string,
   ) => setForm((current) => ({ ...current, [key]: value }));
-  const selectedModels = form.models
-    .split(",")
-    .map((model) => model.trim())
-    .filter(Boolean);
+  const selectedModels = parseModelIds(form.models);
   const groupedModels = useMemo(
     () => groupModels(form.availableModels),
     [form.availableModels],
@@ -129,6 +166,7 @@ export function ProviderDrawer({
     setFormVersion((value) => value + 1);
     setIconRetry(0);
     setModelError("");
+    setManualModelInput("");
     setForm(
       provider
         ? {
@@ -138,9 +176,12 @@ export function ProviderDrawer({
             baseUrl: provider.baseUrl,
             modelPrefix: provider.modelPrefix,
             models: provider.models.join(", "),
-            availableModels: provider.availableModels.length
-              ? provider.availableModels
-              : provider.models.map((id) => ({ id, created: 0 })),
+            // 已启用但不在目录里的模型（旧数据/手动加的）补进目录，
+            // 保证「勾选 ⊆ 目录」，否则勾选一次就会把它们冲掉。
+            availableModels: mergeCatalog(
+              provider.availableModels,
+              provider.models,
+            ),
             apiKey: "",
           }
         : empty,
@@ -227,11 +268,22 @@ export function ProviderDrawer({
   const submit = async () => {
     setSaving(true);
     try {
-      await onSave({ ...form, baseUrl: effectiveBaseURL, kind: effectiveKind });
+      // 输入框里没点「添加」的内容也随本次保存生效，直接保存不丢。
+      const payload = withManualModels(form, manualModelInput);
+      await onSave({
+        ...payload,
+        baseUrl: effectiveBaseURL,
+        kind: effectiveKind,
+      });
       onClose();
     } finally {
       setSaving(false);
     }
+  };
+  const addManualModels = () => {
+    if (!manualModelInput.trim()) return;
+    setForm((current) => withManualModels(current, manualModelInput));
+    setManualModelInput("");
   };
   const loadModels = async () => {
     if (!effectiveBaseURL || (!provider && !form.apiKey)) {
@@ -249,8 +301,8 @@ export function ProviderDrawer({
       );
       setForm((current) => ({
         ...current,
-        availableModels: models,
-        models: provider ? current.models : "",
+        // 刷新只扩充目录并保留勾选：手动加过、接口没返回的模型不丢。
+        availableModels: mergeCatalog(models, parseModelIds(current.models)),
       }));
       if (!models.length) setModelError("接口未返回可用模型。");
     } catch (error) {
@@ -496,21 +548,37 @@ export function ProviderDrawer({
             )}
             {!groupedModels.length && !modelError && (
               <p className="provider-model-empty">
-                点击刷新图标获取模型；首次获取默认不启用。
+                点击刷新图标获取模型，或在下方手动添加；首次获取默认不启用。
               </p>
             )}
-            {/* 目录拉不到时（如 Anthropic 协议上游没有 /models 接口），仍要能手工
-                填模型名，否则提供商无法保存任何可用模型。 */}
-            {!groupedModels.length && (
+            {/* 手动添加行始终可见：上游没有 /models 接口时目录永远拉不到，
+                若只在目录为空时才给输入框，保存过一次就再也加不了新模型。 */}
+            <div className="provider-model-manual">
               <TextField
-                value={form.models}
-                onChange={(value) => change("models", value)}
-                aria-label="模型名称"
+                value={manualModelInput}
+                onChange={setManualModelInput}
+                aria-label="手动添加模型"
               >
-                <Label>模型名称</Label>
-                <Input placeholder="手动填写，多个用逗号分隔" />
+                <Label>手动添加</Label>
+                <Input
+                  placeholder="模型名，多个用逗号分隔"
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    // 这个输入框不提交表单：回车只把模型名收进目录。
+                    event.preventDefault();
+                    addManualModels();
+                  }}
+                />
               </TextField>
-            )}
+              <Button
+                size="sm"
+                variant="outline"
+                isDisabled={!manualModelInput.trim()}
+                onPress={addManualModels}
+              >
+                添加
+              </Button>
+            </div>
           </section>
         </div>
         <div className="provider-drawer-footer">

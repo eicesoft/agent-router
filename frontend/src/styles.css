@@ -1749,6 +1749,20 @@ code {
 .provider-model-error {
   color: var(--error-ink-strong);
 }
+/* 手动添加模型行（拉不到 /models 的上游只能靠它扩充模型）：与映射抽屉的
+   别名输入同构——TextField 吃满剩余宽度，「添加」按钮贴右侧。 */
+.provider-model-manual {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.provider-model-manual .textfield {
+  flex: 1;
+  min-width: 0;
+}
+.provider-model-manual [data-slot="input"] {
+  width: 100%;
+}
 
 /* API Key pool. Credentials are rows inside the provider drawer, so they follow
    the same compact 11-12px scale as the model selector above them. The card is
