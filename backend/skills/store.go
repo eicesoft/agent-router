@@ -160,9 +160,10 @@ func compareVersion(a, b string) int {
 	return len(as) - len(bs)
 }
 
-// List scans every root and returns all skills, sorted by name. Enabled
-// skills whose name collides with another enabled skill are flagged via the
-// returned conflicts set (name -> true).
+// List scans every root and returns all skills: enabled first, then
+// disabled, each group sorted by name. Enabled skills whose name collides
+// with another enabled skill are flagged via the returned conflicts set
+// (name -> true).
 func List(roots []Root) ([]Skill, map[string]bool) {
 	var out []Skill
 	seen := map[string]int{}
@@ -194,6 +195,9 @@ func List(roots []Root) ([]Skill, map[string]bool) {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
+		if out[i].Enabled != out[j].Enabled {
+			return out[i].Enabled
+		}
 		if out[i].Name != out[j].Name {
 			return out[i].Name < out[j].Name
 		}

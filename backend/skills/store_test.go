@@ -92,22 +92,21 @@ func TestListDisabledRootAndMissingFrontmatter(t *testing.T) {
 	writeTestSkill(t, disabled, "gamma", "---\nname: gamma\ndescription: g\n---\n")
 	writeTestSkill(t, root, "delta", "just body, no frontmatter")
 
+	// Name order alone would put gamma first; enabled must win.
+	writeTestSkill(t, root, "aaa", "---\nname: aaa\ndescription: a\n---\n")
 	skills, _ := List([]Root{{Path: root, Source: SourceUser}, {Path: disabled, Source: SourceDisabled}})
-	if len(skills) != 2 {
-		t.Fatalf("expected 2 skills, got %d", len(skills))
+	if len(skills) != 3 {
+		t.Fatalf("expected 3 skills, got %d", len(skills))
 	}
-	byName := map[string]Skill{}
-	for _, s := range skills {
-		byName[s.Name] = s
+	if skills[0].Name != "aaa" || skills[1].Name != "delta" || skills[2].Name != "gamma" {
+		t.Fatalf("order = %q, %q, %q; want enabled (aaa, delta) then disabled (gamma)",
+			skills[0].Name, skills[1].Name, skills[2].Name)
 	}
-	if byName["gamma"].Enabled {
-		t.Fatal("gamma in disabled root should be disabled")
+	if skills[0].Enabled != true || skills[1].Enabled != true || skills[2].Enabled {
+		t.Fatalf("enabled flags = %v, %v, %v", skills[0].Enabled, skills[1].Enabled, skills[2].Enabled)
 	}
-	if !byName["delta"].MissingFrontmatter {
+	if !skills[1].MissingFrontmatter {
 		t.Fatal("delta should be flagged missing frontmatter")
-	}
-	if byName["delta"].Name != "delta" {
-		t.Fatalf("delta should fall back to dir name, got %q", byName["delta"].Name)
 	}
 }
 
