@@ -1812,58 +1812,6 @@ function UsageStatList({
     </div>
   );
 }
-function RouteModelList({
-  providerName,
-  models,
-}: {
-  providerName: string;
-  models: string[];
-}) {
-  const clipRef = useRef<HTMLDivElement>(null);
-  const [isOverflowing, setIsOverflowing] = useState(false);
-
-  useEffect(() => {
-    const clip = clipRef.current;
-    if (!clip) return;
-    const checkOverflow = () =>
-      setIsOverflowing(clip.scrollHeight > clip.clientHeight);
-    checkOverflow();
-    const observer = new ResizeObserver(checkOverflow);
-    observer.observe(clip);
-    return () => observer.disconnect();
-  }, [models]);
-
-  return (
-    <Tooltip>
-      <Tooltip.Trigger>
-        <div className="route-model-list">
-          <div className="route-model-list-clip" ref={clipRef}>
-            <TagGroup
-              size="sm"
-              variant="surface"
-              aria-label={`${providerName} 模型列表`}
-            >
-              <TagGroup.List>
-                {models.map((model) => (
-                  <Tag key={model} id={model}>
-                    {model}
-                  </Tag>
-                ))}
-              </TagGroup.List>
-            </TagGroup>
-          </div>
-          {isOverflowing && (
-            <span className="route-model-more" aria-hidden="true">
-              ...
-            </span>
-          )}
-        </div>
-      </Tooltip.Trigger>
-      <Tooltip.Content>{models.join("、")}</Tooltip.Content>
-    </Tooltip>
-  );
-}
-
 function Overview({
   data,
   proxyRunning,
@@ -1980,13 +1928,21 @@ function Overview({
             {enabledProviders.map((p) => (
               <div className="route-row" key={p.id}>
                 <div>
-                  <b className="route-provider-name">
-                    <span
-                      className={proxyRunning ? "status-dot" : "status-dot off"}
-                    />
-                    {p.name} · {p.models.length}个模型
-                  </b>
-                  <RouteModelList providerName={p.name} models={p.models} />
+                  <Tooltip>
+                    <Tooltip.Trigger>
+                      <b className="route-provider-name">
+                        <span
+                          className={
+                            proxyRunning ? "status-dot" : "status-dot off"
+                          }
+                        />
+                        {p.name} · {p.models.length}个模型
+                      </b>
+                    </Tooltip.Trigger>
+                    <Tooltip.Content className="provider-model-tooltip">
+                      {p.models.length ? p.models.join("、") : "暂无模型"}
+                    </Tooltip.Content>
+                  </Tooltip>
                 </div>
                 <Chip
                   size="sm"

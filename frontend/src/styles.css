@@ -844,30 +844,7 @@ header [data-slot="button"]:not(.provider-add) {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-.route-model-list {
-  position: relative;
-  margin-top: 5px;
   cursor: help;
-}
-.route-model-list-clip {
-  max-height: 44px;
-  overflow: hidden;
-}
-.route-model-list-clip .tag-group__list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.route-model-more {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  padding-left: 5px;
-  color: var(--muted);
-  background: var(--content-bg);
-  font-size: 12px;
-  line-height: 20px;
 }
 .status-dot {
   width: 7px;
