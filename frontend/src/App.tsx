@@ -558,7 +558,9 @@ export default function App() {
   };
   return (
     <div className="app-shell">
-      <div className="titlebar-drag" aria-hidden="true" />
+      <div className="titlebar-drag" aria-hidden="true">
+        {!collapsed && <span className="titlebar-app-name">Agent Router</span>}
+      </div>
       <Sidebar
         page={page}
         setPage={setPage}
@@ -626,11 +628,13 @@ export default function App() {
           {page === "providers" && (
             <Button
               size="sm"
+              isIconOnly
+              variant="ghost"
               className="provider-add"
+              aria-label="添加提供商"
               onPress={() => setEditingProvider(null)}
             >
-              <Plus size={16} />
-              添加提供商
+              <Plus size={15} />
             </Button>
           )}
           {page === "playground" && (

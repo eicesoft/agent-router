@@ -207,6 +207,20 @@ button {
   height: var(--titlebar-height);
   z-index: 500;
   --wails-draggable: drag;
+  display: flex;
+  align-items: center;
+  /* 清出左侧原生窗口控件（红绿灯 / 最大最小化按钮）区域，名称跟在其后。 */
+  padding-left: 84px;
+}
+/* 标题栏软件名：纯展示，点击仍落到拖拽区移动窗口。 */
+.titlebar-app-name {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--muted);
+  letter-spacing: 0.01em;
+  user-select: none;
+  pointer-events: none;
 }
 .icon-rail {
   position: relative;
@@ -527,17 +541,31 @@ body.pane-resizing .resize-handle::after,
   box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.07);
   border-radius: 12px;
   margin: 6px 6px 6px 0;
-  padding: calc(2px + var(--titlebar-height) - 6px) 0 0;
+  /* 标题区上边距 24 → 14（-10px）。 */
+  padding: 14px 0 0;
 }
 header {
   flex: 0 0 auto;
+  position: relative;
+  z-index: 501;
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   /* 横向内边距原先在 .content 上，移到标题行与滚动区各自持有，滚动条才能
      贴住卡片右缘。 */
-  padding: 0 28px 6px;
-  margin-bottom: 8px;
+  /* 下边距 padding 33 → 23（-10px），margin 10 不变。 */
+  padding: 0 28px 23px;
+  margin-bottom: 10px;
+  /* 标题行内有开关/按钮，默认不可拖；仅标题文字块开拖。 */
+  --wails-draggable: no-drag;
+}
+/* 标题与副标题同行展示；整块可拖动窗口。 */
+header > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  --wails-draggable: drag;
 }
 /* 页面主体的滚动容器。列方向 flex 让 .request-log-panel / .playground 这类
    自管理滚动的页面仍能撑满剩余高度。 */
@@ -582,7 +610,7 @@ h1 {
   color: var(--muted-4);
   font-size: 12px;
   line-height: 1.5;
-  margin-top: 5px;
+  margin-top: 0;
 }
 .proxy-toggle {
   display: flex;
@@ -614,7 +642,8 @@ h1 {
   opacity: 0.4;
   cursor: default;
 }
-header [data-slot="button"] {
+/* 页头文字按钮（添加提供商等已是 icon 按钮，走 .provider-add）。 */
+header [data-slot="button"]:not(.provider-add) {
   min-width: 126px !important;
   white-space: nowrap !important;
   background: var(--selected-bg) !important;
@@ -1158,19 +1187,25 @@ code {
 .provider-list {
   max-width: 1050px;
 }
+/* 与下方卡片编辑按钮同源（HeroUI ghost sm icon），尺寸 ×1.15：
+   36→41 / md 32→37，图标 16→18。 */
 .provider-add {
-  min-width: 112px !important;
-  height: 34px !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 6px !important;
-  background: var(--selected-bg) !important;
-  color: #fff !important;
-  border-radius: 7px !important;
-  font-size: 12px !important;
-  font-weight: 600 !important;
-  box-shadow: none !important;
+  width: 41px !important;
+  min-width: 41px !important;
+  height: 41px !important;
+  padding: 0 !important;
+  border-radius: 8px !important;
+}
+@media (min-width: 768px) {
+  .provider-add {
+    width: 37px !important;
+    min-width: 37px !important;
+    height: 37px !important;
+  }
+}
+.provider-add svg {
+  width: 18px !important;
+  height: 18px !important;
 }
 .provider-table {
   border: 1px solid var(--card-border-strong);
@@ -3211,8 +3246,7 @@ html.dark .rail-logo {
 }
 html.dark .rail-action.selected,
 html.dark .create-button,
-html.dark .provider-add,
-html.dark header [data-slot="button"],
+html.dark header [data-slot="button"]:not(.provider-add),
 html.dark .tool-template-write {
   color: #14151a !important;
 }
