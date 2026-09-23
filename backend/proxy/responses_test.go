@@ -453,6 +453,42 @@ func TestResponsesStreamsTextDeltas(t *testing.T) {
 	}
 }
 
+// 上游因 max_tokens 截断时，Responses 必须收成 incomplete，而不是 completed。
+// Codex 只把 completed 当正常回合结束；误报会让它直接停下，留下半截任务。
+func TestResponsesLengthFinishReportsIncomplete(t *testing.T) {
+	s, _, _ := responsesFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		for _, frame := range []string{
+			`data: {"choices":[{"delta":{"content":"partial"}}]}`,
+			`data: {"choices":[{"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":7,"completion_tokens":2}}`,
+			`data: [DONE]`,
+		} {
+			_, _ = io.WriteString(w, frame+"\n\n")
+			flusher.Flush()
+		}
+	})
+
+	response := postResponses(t, s, `{"model":"codex-model","stream":true,"input":[]}`)
+	body := response.Body.String()
+	if strings.Contains(body, `"type":"response.completed"`) {
+		t.Fatalf("length finish must not report completion: %s", body)
+	}
+	payloads := ssePayloads(t, body)
+	last := payloads[len(payloads)-1]
+	if last["type"] != "response.incomplete" {
+		t.Fatalf("last event = %v: %v", last["type"], eventTypes(payloads))
+	}
+	envelope := last["response"].(map[string]any)
+	if envelope["status"] != "incomplete" {
+		t.Fatalf("status = %v", envelope["status"])
+	}
+	details := envelope["incomplete_details"].(map[string]any)
+	if details["reason"] != "max_output_tokens" {
+		t.Fatalf("incomplete reason = %v", details["reason"])
+	}
+}
+
 // 推理内容转成 Codex 认的 reasoning summary 事件。Codex 的
 // reasoning_summary_text.delta 要求带 summary_index，且需先有 part.added。
 func TestResponsesStreamsReasoningSummary(t *testing.T) {

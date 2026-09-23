@@ -200,6 +200,17 @@ func responsesEnvelope(id, model, status string, items []responsesItem, usage ma
 	return envelope
 }
 
+// responsesTerminal 生成正常或截断的终态 response。Codex 只在 completed 时结束回合；
+// 达到输出上限必须报 incomplete，否则它会误以为任务正常收尾。
+func responsesTerminal(id, model, finishReason string, items []responsesItem, usage map[string]any) map[string]any {
+	if finishReason == "length" {
+		envelope := responsesEnvelope(id, model, "incomplete", items, usage)
+		envelope["incomplete_details"] = map[string]any{"reason": "max_output_tokens"}
+		return envelope
+	}
+	return responsesEnvelope(id, model, "completed", items, usage)
+}
+
 // chatUsageToResponses 把上游的用量转成 Responses 的 usage 形状。
 //
 // 三个 token 字段都非空是硬要求：Codex 的 ResponseCompletedUsage 里
@@ -230,6 +241,7 @@ func chatResponseToResponses(body []byte, clientModel string, plan *toolPlan) ([
 				Reasoning        string          `json:"reasoning"`
 				ToolCalls        json.RawMessage `json:"tool_calls"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage *usagePayload `json:"usage"`
 	}
@@ -245,6 +257,7 @@ func chatResponseToResponses(body []byte, clientModel string, plan *toolPlan) ([
 	}
 
 	acc := newStreamAccumulator()
+	finishReason := ""
 	if len(upstream.Choices) > 0 {
 		message := upstream.Choices[0].Message
 		acc.text.WriteString(message.Content)
@@ -253,9 +266,10 @@ func chatResponseToResponses(body []byte, clientModel string, plan *toolPlan) ([
 			acc.reasoning.WriteString(message.Reasoning)
 		}
 		acc.addToolCalls(message.ToolCalls)
+		finishReason = upstream.Choices[0].FinishReason
 	}
 
-	out, _ := json.Marshal(responsesEnvelope(newResponseID(), clientModel, "completed", acc.items(plan), chatUsageToResponses(usage)))
+	out, _ := json.Marshal(responsesTerminal(newResponseID(), clientModel, finishReason, acc.items(plan), chatUsageToResponses(usage)))
 	return out, usage
 }
 
@@ -405,10 +419,12 @@ func pipeChatStreamToResponses(w io.Writer, body io.ReadCloser, clientModel stri
 		}
 		responsesSSE(dest, map[string]any{"type": "response.output_item.done", "item": item})
 	}
-	responsesSSE(dest, map[string]any{
-		"type":     "response.completed",
-		"response": responsesEnvelope(responseID, clientModel, "completed", items, chatUsageToResponses(usage)),
-	})
+	terminal := responsesTerminal(responseID, clientModel, finishReason, items, chatUsageToResponses(usage))
+	event := "response.completed"
+	if terminal["status"] == "incomplete" {
+		event = "response.incomplete"
+	}
+	responsesSSE(dest, map[string]any{"type": event, "response": terminal})
 	flush()
 	return usage, nil
 }
