@@ -8,6 +8,7 @@ import {
   Label,
   Modal,
   Pagination,
+  ScrollShadow,
   Separator,
   Switch,
   Tabs,
@@ -102,6 +103,7 @@ import {
 } from "./components/MappingDrawer";
 import { FieldSelect } from "./components/FieldSelect";
 import { Playground } from "./components/Playground";
+import { JsonBlock } from "./components/JsonBlock";
 import { DateRangeField } from "./components/DateRangeField";
 import { SkillsPanel } from "./components/SkillsPanel";
 import { SkillsLinkModal } from "./components/SkillsLinkModal";
@@ -862,6 +864,88 @@ function formatLatency(latencyMs: number) {
     : `${latencyMs} ms`;
 }
 
+type PayloadSegment =
+  | { kind: "whole"; text: string }
+  | { kind: "frame"; data: string }
+  | { kind: "meta"; text: string };
+
+// 流式响应整段不是合法 JSON（多行 `data: {…}`），直接丢给 JsonBlock 会回退成纯文本。
+// 先按 SSE 行拆开：`data:` 后面的载荷单独成帧，`event:` 等元信息行原样展示。
+function segmentPayload(content: string): PayloadSegment[] {
+  const trimmed = content.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      JSON.parse(trimmed);
+      return [{ kind: "whole", text: content }];
+    } catch {
+      // 不是完整 JSON，继续按行拆（可能是截断 body 或 SSE）。
+    }
+  }
+  const lines = content.split(/\r?\n/);
+  if (!lines.some((line) => line.trimStart().startsWith("data:"))) {
+    return content ? [{ kind: "whole", text: content }] : [];
+  }
+  const segments: PayloadSegment[] = [];
+  for (const line of lines) {
+    const text = line.trim();
+    if (!text) continue;
+    if (text.startsWith("data:")) {
+      // SSE 规范：`data:` 后至多去掉一个空格，其余原样保留。
+      const payload = text.slice(5);
+      segments.push({
+        kind: "frame",
+        data: payload.startsWith(" ") ? payload.slice(1) : payload,
+      });
+    } else {
+      segments.push({ kind: "meta", text });
+    }
+  }
+  return segments;
+}
+
+function RequestLogPayload({
+  content,
+  placeholder,
+}: {
+  content: string;
+  placeholder: string;
+}) {
+  const segments = useMemo(() => segmentPayload(content), [content]);
+  const first = segments[0];
+  if (!first || first.kind === "whole") {
+    return (
+      <JsonBlock
+        className="request-log-json-view on-dark"
+        text={first ? first.text : content}
+        placeholder={placeholder}
+        expand="rootOnly"
+      />
+    );
+  }
+  return (
+    <div className="request-log-json-view request-log-frames">
+      {segments.map((segment, index) =>
+        segment.kind === "frame" ? (
+          <div className="request-log-frame" key={`frame-${index}`}>
+            <JsonBlock
+              className="on-dark request-log-frame-body"
+              text={segment.data}
+              expand="collapsed"
+            />
+          </div>
+        ) : (
+          <div
+            className="request-log-frame request-log-frame-meta"
+            key={`meta-${index}`}
+          >
+            {segment.text}
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
+
 function RequestLogs({
   logs,
   loading,
@@ -1469,9 +1553,17 @@ function RequestLogs({
                     正在加载完整内容…
                   </div>
                 ) : null}
-                <pre className="request-log-json-view">
-                  {formatJSON(selectedPayload?.content ?? "")}
-                </pre>
+                <div className="request-log-json-well">
+                  <ScrollShadow
+                    className="request-log-json-scroll"
+                    orientation="vertical"
+                  >
+                    <RequestLogPayload
+                      content={selectedPayload?.content ?? ""}
+                      placeholder="暂无输出内容"
+                    />
+                  </ScrollShadow>
+                </div>
               </Modal.Body>
               <Modal.Footer>
                 <Tooltip>
@@ -1521,14 +1613,6 @@ function pageWindow(page: number, total: number): (number | null)[] {
     out.push(n);
   });
   return out;
-}
-function formatJSON(value: string): string {
-  if (!value) return "暂无输出内容";
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2);
-  } catch {
-    return value;
-  }
 }
 // Backend returns model stats ordered by request count, so the panel keeps the
 // most-used few instead of growing without bound as one-off models accumulate.

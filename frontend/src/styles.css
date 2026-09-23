@@ -105,6 +105,20 @@
   --frame-text-ink: #dfe2e6;
   --json-bg: #15171b;
   --json-ink: #e8eaed;
+  /* JSON 语法着色：两套色板各针对一种固定背景。on-dark 供请求日志正文井这类
+     两种主题下都保持深底的容器；键、括号、值分开取值，避免整棵树只有一种颜色。 */
+  --syntax-on-dark-key: #9ecbff;
+  --syntax-on-dark-punct: #7d8089;
+  --syntax-on-dark-string: #86d99f;
+  --syntax-on-dark-number: #d3b0ff;
+  --syntax-on-dark-boolean: #e6b673;
+  --syntax-on-dark-null: #8b8d95;
+  --syntax-on-light-key: #1f5f9e;
+  --syntax-on-light-punct: #9a9ca4;
+  --syntax-on-light-string: #1b6b3a;
+  --syntax-on-light-number: #5d55ce;
+  --syntax-on-light-boolean: #a45a2a;
+  --syntax-on-light-null: #858790;
   --more-fade: linear-gradient(90deg, rgba(255, 255, 255, 0), #fff 35%);
 }
 input {
@@ -2335,14 +2349,22 @@ code {
 .request-log-output-cell:focus-within .request-log-output-action {
   opacity: 1;
 }
-.request-log-json-view {
-  max-height: 62vh;
+/* 弹窗里的 JSON 井：固定高度，边框/底色在不参与 mask 的外壳上；
+   滚动与上下边缘淡出交给内层 ScrollShadow（.scroll-shadow--vertical 自带 overflow-y: auto）。 */
+.request-log-json-well {
+  height: 62vh;
   margin: 0;
-  overflow: auto;
-  padding: 14px;
   border: 1px solid var(--json-border);
   border-radius: 9px;
   background: var(--json-bg);
+  overflow: hidden;
+}
+.request-log-json-scroll {
+  height: 100%;
+}
+.request-log-json-view {
+  margin: 0;
+  padding: 14px;
   color: var(--json-ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
@@ -2350,6 +2372,271 @@ code {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* 流式 body：每条 `data:` 帧一个 JsonBlock，帧之间留缝，元信息行（event: 等）压暗。 */
+.request-log-frames {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  white-space: normal;
+}
+.request-log-frame {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.request-log-frame-body {
+  margin: 0;
+  color: var(--json-ink);
+}
+.request-log-frame-meta {
+  color: rgba(232, 234, 237, 0.55);
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+/* ===== JSON 树（请求日志弹窗 + 演练场 SSE 帧共用） =====
+   渲染在 JsonBlock.tsx 里自己实现（折叠时子节点不挂载，摘要只能从数据取，所以
+   原来那层 react-json-view-lite 已经去掉），这里负责它的结构与配色。
+
+   配色分两套固定色板，因为容器的明暗并不总是跟随主题：请求日志的正文井在两种主题
+   下都是深色。默认的 --json-* 跟随主题翻转，.on-dark / .on-light 则把某一
+   套钉死，供固定深底复用；演练场文本帧的底色已随主题翻转，直接吃默认翻转即可。 */
+.json-block {
+  position: relative;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: inherit;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  --json-key: var(--syntax-on-light-key);
+  --json-punct: var(--syntax-on-light-punct);
+  --json-string: var(--syntax-on-light-string);
+  --json-number: var(--syntax-on-light-number);
+  --json-boolean: var(--syntax-on-light-boolean);
+  --json-null: var(--syntax-on-light-null);
+}
+html.dark .json-block {
+  --json-key: var(--syntax-on-dark-key);
+  --json-punct: var(--syntax-on-dark-punct);
+  --json-string: var(--syntax-on-dark-string);
+  --json-number: var(--syntax-on-dark-number);
+  --json-boolean: var(--syntax-on-dark-boolean);
+  --json-null: var(--syntax-on-dark-null);
+}
+.json-block.on-dark {
+  --json-key: var(--syntax-on-dark-key);
+  --json-punct: var(--syntax-on-dark-punct);
+  --json-string: var(--syntax-on-dark-string);
+  --json-number: var(--syntax-on-dark-number);
+  --json-boolean: var(--syntax-on-dark-boolean);
+  --json-null: var(--syntax-on-dark-null);
+}
+.json-block.on-light {
+  --json-key: var(--syntax-on-light-key);
+  --json-punct: var(--syntax-on-light-punct);
+  --json-string: var(--syntax-on-light-string);
+  --json-number: var(--syntax-on-light-number);
+  --json-boolean: var(--syntax-on-light-boolean);
+  --json-null: var(--syntax-on-light-null);
+}
+/* 语法色对所有容器一律生效：键、括号、字符串、数字、布尔各自一色，类型信息在
+   请求日志与 SSE 帧里同样重要。默认色板跟随主题翻转；底色不跟主题走的容器把色板
+   钉死——请求日志的正文井恒深底（调用处加 on-dark）。 */
+
+.json-block-plain {
+  margin: 0;
+}
+.json-block-plain pre {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* 顶部右侧的全部展开/收起：sticky 贴在滚动视口顶端，height:0 不占文档流，
+   按钮叠在树上方，不把第一行 JSON 往下推。 */
+.json-block-actions {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  height: 0;
+  pointer-events: none;
+}
+.json-block-expand-all {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: 6px 6px 0 0;
+  padding: 0;
+  border: 1px solid var(--json-border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  background: rgba(21, 23, 27, 0.72);
+  color: var(--json-ink, #e8eaed);
+  cursor: pointer;
+  opacity: 0.55;
+  transition:
+    opacity 0.12s ease,
+    border-color 0.12s ease;
+}
+.json-block-expand-all:hover {
+  opacity: 1;
+  border-color: rgba(255, 255, 255, 0.28);
+}
+.json-block-expand-all:focus-visible {
+  outline: 1px solid var(--accent-mark, #6ea8ff);
+  outline-offset: 1px;
+}
+/* 浅色帧（演练场）上同一颗按钮改成深字浅底，否则深底按钮压在白纸上很突兀。 */
+.pg-frame .json-block-expand-all {
+  background: rgba(255, 255, 255, 0.86);
+  border-color: rgba(0, 0, 0, 0.14);
+  color: #3a3c42;
+}
+.pg-frame .json-block-expand-all:hover {
+  border-color: rgba(0, 0, 0, 0.3);
+}
+.json-tree {
+  min-width: 0;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* 折叠把手占的横向格子（见下方 .json-tree-toggle）。没有把手的行要自己补上
+     同样的宽度，同一层的键才会对齐，所以尺寸抽成变量供两处共用。 */
+  --json-toggle-width: 12px;
+  --json-toggle-gap: 3px;
+}
+/* <ul> 复位：列表样式与缩进去掉，缩进只留 padding-left 一层。行自己带 padding
+   会吃掉缩进，所以行用 inline-block、间距靠垂直外边距。 */
+.json-tree-children {
+  margin: 0;
+  padding: 0 0 0 14px;
+  list-style: none;
+}
+/* 容器的外壳：包住「标签行 + 子节点组 + 收尾括号行」，是树形结构里真正的
+   treeitem。它自身不参与排版，只是一个语义容器。 */
+.json-tree-node {
+  min-width: 0;
+}
+.json-tree-item {
+  list-style: none;
+}
+/* 展开态的行照旧随宽度换行：一个很长的字符串值应该折行显示，而不是被省略号截断
+   ——那是折叠摘要才有的行为。首行（开括号行）要相对定位，给整行点击热区当坐标系。 */
+.json-tree-row {
+  min-width: 0;
+}
+.json-tree-row-open {
+  position: relative;
+  cursor: pointer;
+}
+/* 折叠态的行反过来：必须严格一行。用 flex 让摘要参与收缩，超宽才出现省略号；
+   若把摘要做成块级元素，它会在 `{` 之后强制换行，短摘要也被推到下一行去。 */
+.json-tree-row-clipped {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.json-tree-row-clipped > * {
+  flex: 0 0 auto;
+}
+/* 摘要按内容占宽：不参与 grow，收尾 `}` 才能贴着内容而不是被顶到行末；
+   超宽时靠 shrink + min-width: 0 收缩，text-overflow 在摘要自身上出省略号。 */
+.json-tree-collapsed-snippet {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--json-punct);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 首行整行点击热区（折叠→展开 / 展开→折叠）：盖满该行，不参与 flex 排版。 */
+.json-tree-row-hit {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.json-tree-row-clipped:hover .json-tree-collapsed-snippet {
+  color: var(--json-ink);
+}
+.json-tree-label {
+  color: var(--json-key);
+  font-weight: 600;
+}
+.json-tree-label-clickable {
+  cursor: pointer;
+}
+.json-tree-punct {
+  color: var(--json-punct);
+}
+.json-tree-string {
+  color: var(--json-string);
+}
+.json-tree-number {
+  color: var(--json-number);
+}
+.json-tree-boolean {
+  color: var(--json-boolean);
+}
+.json-tree-null,
+.json-tree-other {
+  color: var(--json-null);
+}
+/* 标量行没有折叠把手，但同层的键要和有把手的兄弟对齐，所以渲染时补一格 <span
+   class="json-tree-gutter"> 占位。用真实的 span 而不是 ::before + :has，是因为
+   占位与否完全由组件决定，不再依赖选择器能力。 */
+.json-tree-gutter,
+.json-tree-toggle {
+  flex: 0 0 auto;
+  display: inline-block;
+  width: var(--json-toggle-width);
+  margin-right: var(--json-toggle-gap);
+}
+/* 折叠把手：同一个 ▸ 靠旋转表示开合，避免一排三角抢走对内容的注意力。它是真的
+   <button>（可 Tab、可 Enter/Space），所以要把浏览器默认外观整个复位。 */
+.json-tree-toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--json-punct);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    transform 140ms ease-out,
+    color 140ms ease-out;
+}
+.json-tree-toggle::after {
+  content: "▸";
+  font-size: 0.85em;
+}
+.json-tree-toggle:hover {
+  color: var(--json-key);
+}
+.json-tree-toggle.is-open {
+  transform: rotate(90deg);
+}
+.json-tree-toggle:focus-visible,
+.json-tree-row-hit:focus-visible {
+  outline: 1px solid var(--accent-mark);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/* 请求日志的正文井两种主题下都是深底，语法色必须钉在深色那一套（调用处加
+   on-dark，见 App.tsx）。 */
 .request-log-dialog {
   max-width: 1100px;
 }
