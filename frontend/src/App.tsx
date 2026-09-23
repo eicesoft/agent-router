@@ -59,6 +59,7 @@ import {
   listSkillLinks,
   localAPIKeyEnvStatus,
   renderToolTemplate,
+  refreshDevModels,
   saveLocalAPIKey,
   saveModelMapping,
   saveProvider,
@@ -107,7 +108,7 @@ import { JsonBlock } from "./components/JsonBlock";
 import { DateRangeField } from "./components/DateRangeField";
 import { SkillsPanel } from "./components/SkillsPanel";
 import { SkillsLinkModal } from "./components/SkillsLinkModal";
-import { formatTokenCount, num } from "./lib/format";
+import { formatPrice, formatTokenCount, num } from "./lib/format";
 function TokenValue({
   value,
   as = "strong",
@@ -314,6 +315,11 @@ export default function App() {
     // 只在切到日志页时取数：筛选条件由「查询」按钮显式提交，不随输入实时触发。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
+  // 进入模型映射页时后台刷一次 models.dev/models.json；失败静默，弹窗仍读旧缓存。
+  useEffect(() => {
+    if (page !== "mappings") return;
+    void refreshDevModels().catch(() => undefined);
+  }, [page]);
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!resizing.current) return;
@@ -441,6 +447,12 @@ export default function App() {
         // 编辑已有映射时保留其启停状态。
         enabled:
           data.mappings.find((item) => item.id === form.id)?.enabled ?? true,
+        inputTypes: form.inputTypes,
+        inputContextSize: form.inputContextSize,
+        outputSize: form.outputSize,
+        inputPrice: form.inputPrice,
+        outputPrice: form.outputPrice,
+        cacheReadPrice: form.cacheReadPrice,
       });
     } catch (err) {
       // 后端会拒绝重复路由；抛回去让抽屉显示原因，否则用户只看到「点了没反应」。
@@ -527,6 +539,7 @@ export default function App() {
         .filter(Boolean),
       availableModels: form.availableModels,
       credentialMode: editingProvider?.credentialMode ?? "session",
+      devId: form.devId,
       updatedAt: editingProvider?.updatedAt ?? "",
     });
     // A new provider's key becomes its first pooled credential; for an existing
@@ -538,12 +551,15 @@ export default function App() {
         await setProviderAPIKey(saved.id, form.apiKey);
       }
     }
+    // 保存时后端会按 devId 同步映射价格（含新建映射行），回读一次让 UI 立即跟上。
+    const boot = await bootstrap().catch(() => null);
     setData({
       ...data,
       providers: [
         ...data.providers.filter((item) => item.id !== saved.id),
         saved,
       ].sort((a, b) => a.name.localeCompare(b.name)),
+      ...(boot ? { mappings: boot.mappings } : {}),
     });
   };
   const currentPage = pageMeta[page];
@@ -2145,6 +2161,12 @@ function deriveAutoMappings(providers: Provider[]): ModelMapping[] {
         upstreamModel: model,
         aliases: [],
         enabled: true,
+        inputTypes: ["text"],
+        inputContextSize: 0,
+        outputSize: 0,
+        inputPrice: 0,
+        outputPrice: 0,
+        cacheReadPrice: 0,
       });
     }
   }
@@ -2191,6 +2213,12 @@ function Mappings({
           upstreamModel: model,
           aliases: [],
           enabled: true,
+          inputTypes: ["text"],
+          inputContextSize: 0,
+          outputSize: 0,
+          inputPrice: 0,
+          outputPrice: 0,
+          cacheReadPrice: 0,
         },
       })),
     }));
@@ -2281,6 +2309,52 @@ function Mappings({
                     <Link size={13} />
                     <code>{model}</code>
                   </div>
+                  {/* 模型能力与价格元数据：类型偏离默认 text、或配了容量/单价时才占
+                      一行，纯自动映射（未配置）的卡片保持原样。 */}
+                  {(() => {
+                    const types = mapping.inputTypes ?? [];
+                    const showTypes =
+                      types.length > 0 &&
+                      !(types.length === 1 && types[0] === "text");
+                    const showInput = (mapping.inputContextSize ?? 0) > 0;
+                    const showOutput = (mapping.outputSize ?? 0) > 0;
+                    const inputPrice = mapping.inputPrice ?? 0;
+                    const outputPrice = mapping.outputPrice ?? 0;
+                    const cacheReadPrice = mapping.cacheReadPrice ?? 0;
+                    const showPrice =
+                      inputPrice > 0 || outputPrice > 0 || cacheReadPrice > 0;
+                    if (!showTypes && !showInput && !showOutput && !showPrice)
+                      return null;
+                    const priceParts = [
+                      inputPrice > 0 ? `入 ${formatPrice(inputPrice)}` : null,
+                      outputPrice > 0 ? `出 ${formatPrice(outputPrice)}` : null,
+                      cacheReadPrice > 0
+                        ? `缓存 ${formatPrice(cacheReadPrice)}`
+                        : null,
+                    ].filter(Boolean);
+                    return (
+                      <div className="route-card-meta">
+                        {showTypes && (
+                          <span title="输入类型">{types.join(" · ")}</span>
+                        )}
+                        {showInput && (
+                          <span title="输入上下文大小">
+                            输入 {formatTokenCount(mapping.inputContextSize)}
+                          </span>
+                        )}
+                        {showOutput && (
+                          <span title="输出大小">
+                            输出 {formatTokenCount(mapping.outputSize)}
+                          </span>
+                        )}
+                        {showPrice && (
+                          <span title="单价（USD / 百万 tokens）">
+                            {priceParts.join(" · ")}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {/* 同名链顺位：只有多家提供商共用这个名字时才显示。 */}
                   {(() => {
                     const rank = rankOf(mapping);

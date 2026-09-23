@@ -38,7 +38,7 @@ func OpenPath(path string) (*sql.DB, error) {
 	if _, err := db.Exec(`
 CREATE TABLE IF NOT EXISTS providers (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, base_url TEXT NOT NULL,
-  api_key_ref TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '', model_prefix TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, models_json TEXT NOT NULL DEFAULT '[]', available_models_json TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL
+  api_key_ref TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '', model_prefix TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, models_json TEXT NOT NULL DEFAULT '[]', available_models_json TEXT NOT NULL DEFAULT '[]', dev_id TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS deleted_providers (
   id TEXT PRIMARY KEY
@@ -48,7 +48,13 @@ CREATE TABLE IF NOT EXISTS deleted_providers (
 CREATE TABLE IF NOT EXISTS model_mappings (
   id TEXT PRIMARY KEY, client_model TEXT NOT NULL, provider_id TEXT NOT NULL,
   upstream_model TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
-  aliases_json TEXT NOT NULL DEFAULT '[]'
+  aliases_json TEXT NOT NULL DEFAULT '[]',
+  input_types_json TEXT NOT NULL DEFAULT '[]',
+  input_context_size INTEGER NOT NULL DEFAULT 0,
+  output_size INTEGER NOT NULL DEFAULT 0,
+  input_price REAL NOT NULL DEFAULT 0,
+  output_price REAL NOT NULL DEFAULT 0,
+  cache_read_price REAL NOT NULL DEFAULT 0
 );
 -- 同名链级策略：一条 failover 链共享一个起点规则（默认 failover）。
 -- 见 backend/config/mappings.go 的 ChainMode。
@@ -150,6 +156,17 @@ CREATE INDEX IF NOT EXISTS idx_provider_credentials_provider ON provider_credent
 		// 映射别名：客户端可用这些名字命中同一条映射，但别名不出现在
 		// /v1/models 与生成给 CLI 的模型列表里，仅用于请求路由。
 		{"model_mappings", "aliases_json", "TEXT NOT NULL DEFAULT '[]'"},
+		// models.dev 目录 id：提供商选择器写入，保存时据此从 api.json 同步模型价格。
+		{"providers", "dev_id", "TEXT NOT NULL DEFAULT ''"},
+		// 映射的模型元数据：输入模态（text/image/…）与输入上下文、输出大小
+		// （tokens，0 表示未设置），仅配置存储与 UI 展示，网关行为不消费。
+		{"model_mappings", "input_types_json", "TEXT NOT NULL DEFAULT '[]'"},
+		{"model_mappings", "input_context_size", "INTEGER NOT NULL DEFAULT 0"},
+		{"model_mappings", "output_size", "INTEGER NOT NULL DEFAULT 0"},
+		// 单价（USD / 百万 tokens，默认 0 即未设置）：仅 UI 配置展示，不参与计费。
+		{"model_mappings", "input_price", "REAL NOT NULL DEFAULT 0"},
+		{"model_mappings", "output_price", "REAL NOT NULL DEFAULT 0"},
+		{"model_mappings", "cache_read_price", "REAL NOT NULL DEFAULT 0"},
 	} {
 		var exists int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, column.table, column.name).Scan(&exists); err != nil {
@@ -162,6 +179,13 @@ CREATE INDEX IF NOT EXISTS idx_provider_credentials_provider ON provider_credent
 				return nil, fmt.Errorf("migrate %s.%s: %w", column.table, column.name, err)
 			}
 		}
+	}
+	// 补列出来的存量行 input_types_json 是 '[]'：模型默认都有 text 能力，
+	// 一次性矫正为 ["text"]，抽屉里才能看到 text 处于勾选状态。
+	// 幂等：已是 ["text"] 或用户配置过的行不再匹配。
+	if _, err := db.Exec(`UPDATE model_mappings SET input_types_json = '["text"]' WHERE input_types_json = '[]'`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate model_mappings input types: %w", err)
 	}
 	// 旧库的 model_mappings 带 client_model UNIQUE，挡死了同名多路由。SQLite 不能直接
 	// 删约束，只能整表重建；按 sqlite_master 里的建表语句判断，所以幂等。放在补列之后，
@@ -176,10 +200,16 @@ CREATE INDEX IF NOT EXISTS idx_provider_credentials_provider ON provider_credent
 CREATE TABLE model_mappings_rebuilt (
   id TEXT PRIMARY KEY, client_model TEXT NOT NULL, provider_id TEXT NOT NULL,
   upstream_model TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
-  aliases_json TEXT NOT NULL DEFAULT '[]'
+  aliases_json TEXT NOT NULL DEFAULT '[]',
+  input_types_json TEXT NOT NULL DEFAULT '[]',
+  input_context_size INTEGER NOT NULL DEFAULT 0,
+  output_size INTEGER NOT NULL DEFAULT 0,
+  input_price REAL NOT NULL DEFAULT 0,
+  output_price REAL NOT NULL DEFAULT 0,
+  cache_read_price REAL NOT NULL DEFAULT 0
 );
-INSERT INTO model_mappings_rebuilt(id, client_model, provider_id, upstream_model, enabled, aliases_json)
-  SELECT id, client_model, provider_id, upstream_model, enabled, aliases_json FROM model_mappings;
+INSERT INTO model_mappings_rebuilt(id, client_model, provider_id, upstream_model, enabled, aliases_json, input_types_json, input_context_size, output_size, input_price, output_price, cache_read_price)
+  SELECT id, client_model, provider_id, upstream_model, enabled, aliases_json, input_types_json, input_context_size, output_size, input_price, output_price, cache_read_price FROM model_mappings;
 DROP TABLE model_mappings;
 ALTER TABLE model_mappings_rebuilt RENAME TO model_mappings;`); err != nil {
 			db.Close()

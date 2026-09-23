@@ -1,6 +1,8 @@
 import type {
   AppSettings,
   Bootstrap,
+  DevModel,
+  DevProvider,
   EnvStatus,
   LocalAPIKey,
   ModelMapping,
@@ -38,6 +40,7 @@ const demo: Bootstrap = {
         { id: "gpt-4o-mini", created: 0 },
       ],
       credentialMode: "session",
+      devId: "",
       updatedAt: "",
     },
     {
@@ -52,6 +55,7 @@ const demo: Bootstrap = {
       models: ["claude-sonnet-4-5"],
       availableModels: [{ id: "claude-sonnet-4-5", created: 0 }],
       credentialMode: "session",
+      devId: "",
       updatedAt: "",
     },
   ],
@@ -63,6 +67,12 @@ const demo: Bootstrap = {
       upstreamModel: "gpt-4.1",
       aliases: ["gpt-4.1-latest"],
       enabled: true,
+      inputTypes: ["text", "image"],
+      inputContextSize: 128000,
+      outputSize: 32000,
+      inputPrice: 0,
+      outputPrice: 0,
+      cacheReadPrice: 0,
     },
   ],
   agents: [
@@ -152,6 +162,28 @@ export async function toggleProvider(
 export async function saveProvider(input: Provider): Promise<Provider> {
   const app = (window as any).go?.main?.App;
   return app ? app.SaveProvider(input) : input;
+}
+export async function listDevProviders(): Promise<DevProvider[]> {
+  const app = (window as any).go?.main?.App;
+  if (!app) return [];
+  return app.ListDevProviders();
+}
+// 后台刷新 models.dev 缓存并返回最新可读列表；网络失败时仍返回旧缓存。
+export async function refreshDevProviders(): Promise<DevProvider[]> {
+  const app = (window as any).go?.main?.App;
+  if (!app) return [];
+  return app.RefreshDevProviders();
+}
+export async function listDevModels(): Promise<DevModel[]> {
+  const app = (window as any).go?.main?.App;
+  if (!app) return [];
+  return app.ListDevModels();
+}
+// 后台刷新 models.dev/models.json 并返回最新可读列表；网络失败时仍返回旧缓存。
+export async function refreshDevModels(): Promise<DevModel[]> {
+  const app = (window as any).go?.main?.App;
+  if (!app) return [];
+  return app.RefreshDevModels();
 }
 export async function deleteProvider(id: string): Promise<void> {
   const app = (window as any).go?.main?.App;

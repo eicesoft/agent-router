@@ -58,6 +58,14 @@ export function GetUsageBreakdown() {
   return window['go']['main']['App']['GetUsageBreakdown']();
 }
 
+export function ListDevModels() {
+  return window['go']['main']['App']['ListDevModels']();
+}
+
+export function ListDevProviders() {
+  return window['go']['main']['App']['ListDevProviders']();
+}
+
 export function ListProviderCredentials(arg1) {
   return window['go']['main']['App']['ListProviderCredentials'](arg1);
 }
@@ -84,6 +92,14 @@ export function LocalAPIKeyEnvStatus(arg1) {
 
 export function PlaygroundChat(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['PlaygroundChat'](arg1, arg2, arg3, arg4);
+}
+
+export function RefreshDevModels() {
+  return window['go']['main']['App']['RefreshDevModels']();
+}
+
+export function RefreshDevProviders() {
+  return window['go']['main']['App']['RefreshDevProviders']();
 }
 
 export function RenderToolTemplate(arg1, arg2, arg3) {

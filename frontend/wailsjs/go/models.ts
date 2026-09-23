@@ -61,6 +61,12 @@ export namespace config {
 	    upstreamModel: string;
 	    aliases: string[];
 	    enabled: boolean;
+	    inputTypes: string[];
+	    inputContextSize: number;
+	    outputSize: number;
+	    inputPrice: number;
+	    outputPrice: number;
+	    cacheReadPrice: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new ModelMapping(source);
@@ -74,6 +80,12 @@ export namespace config {
 	        this.upstreamModel = source["upstreamModel"];
 	        this.aliases = source["aliases"];
 	        this.enabled = source["enabled"];
+	        this.inputTypes = source["inputTypes"];
+	        this.inputContextSize = source["inputContextSize"];
+	        this.outputSize = source["outputSize"];
+	        this.inputPrice = source["inputPrice"];
+	        this.outputPrice = source["outputPrice"];
+	        this.cacheReadPrice = source["cacheReadPrice"];
 	    }
 	}
 
@@ -290,6 +302,104 @@ export namespace provider {
 	        this.created = source["created"];
 	    }
 	}
+	export class DevModelLimit {
+	    context: number;
+	    output: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DevModelLimit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.context = source["context"];
+	        this.output = source["output"];
+	    }
+	}
+	export class DevModelModalities {
+	    input: string[];
+	    output: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new DevModelModalities(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.input = source["input"];
+	        this.output = source["output"];
+	    }
+	}
+	export class DevModel {
+	    id: string;
+	    name: string;
+	    description: string;
+	    reasoning: boolean;
+	    tool_call: boolean;
+	    structured_output: boolean;
+	    release_date: string;
+	    modalities: DevModelModalities;
+	    limit: DevModelLimit;
+	
+	    static createFrom(source: any = {}) {
+	        return new DevModel(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.reasoning = source["reasoning"];
+	        this.tool_call = source["tool_call"];
+	        this.structured_output = source["structured_output"];
+	        this.release_date = source["release_date"];
+	        this.modalities = this.convertValues(source["modalities"], DevModelModalities);
+	        this.limit = this.convertValues(source["limit"], DevModelLimit);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
+	
+	export class DevProvider {
+	    id: string;
+	    env: string[];
+	    npm: string;
+	    api: string;
+	    name: string;
+	    doc: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DevProvider(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.env = source["env"];
+	        this.npm = source["npm"];
+	        this.api = source["api"];
+	        this.name = source["name"];
+	        this.doc = source["doc"];
+	    }
+	}
 	export class Provider {
 	    id: string;
 	    name: string;
@@ -302,6 +412,7 @@ export namespace provider {
 	    models: string[];
 	    availableModels: AvailableModel[];
 	    credentialMode: string;
+	    devId: string;
 	    updatedAt: string;
 	
 	    static createFrom(source: any = {}) {
@@ -321,6 +432,7 @@ export namespace provider {
 	        this.models = source["models"];
 	        this.availableModels = this.convertValues(source["availableModels"], AvailableModel);
 	        this.credentialMode = source["credentialMode"];
+	        this.devId = source["devId"];
 	        this.updatedAt = source["updatedAt"];
 	    }
 	

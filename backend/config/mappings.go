@@ -23,6 +23,17 @@ type ModelMapping struct {
 	UpstreamModel string   `json:"upstreamModel"`
 	Aliases       []string `json:"aliases"`
 	Enabled       bool     `json:"enabled"`
+	// 模型元数据，供 UI 配置展示与客户端配置生成（pi/omp 的 contextWindow/
+	// maxTokens/input，ai-sdk 系的 limit/modalities/attachment）消费，网关路由
+	// 不消费。大小单位为 tokens，0 表示未设置。
+	// InputTypes 取值为 text/image/audio/video/file。
+	InputTypes       []string `json:"inputTypes"`
+	InputContextSize int      `json:"inputContextSize"`
+	OutputSize       int      `json:"outputSize"`
+	// 价格仅存储与展示，单位 USD / 百万 tokens，默认 0（未设置）；网关不据此计费。
+	InputPrice     float64 `json:"inputPrice"`
+	OutputPrice    float64 `json:"outputPrice"`
+	CacheReadPrice float64 `json:"cacheReadPrice"`
 }
 
 // Names returns every client-side name that resolves to this mapping.
@@ -60,7 +71,7 @@ func NormalizeChainMode(mode string) string {
 
 func NewMappingStore(db *sql.DB) (*MappingStore, error) {
 	s := &MappingStore{db: db, items: map[string]ModelMapping{}, chainMode: map[string]string{}}
-	rows, err := db.Query(`SELECT id,client_model,provider_id,upstream_model,enabled,aliases_json FROM model_mappings`)
+	rows, err := db.Query(`SELECT id,client_model,provider_id,upstream_model,enabled,aliases_json,input_types_json,input_context_size,output_size,input_price,output_price,cache_read_price FROM model_mappings`)
 	if err != nil {
 		return nil, err
 	}
@@ -68,12 +79,13 @@ func NewMappingStore(db *sql.DB) (*MappingStore, error) {
 	for rows.Next() {
 		var m ModelMapping
 		var enabled int
-		var aliases string
-		if err := rows.Scan(&m.ID, &m.ClientModel, &m.ProviderID, &m.UpstreamModel, &enabled, &aliases); err != nil {
+		var aliases, inputTypes string
+		if err := rows.Scan(&m.ID, &m.ClientModel, &m.ProviderID, &m.UpstreamModel, &enabled, &aliases, &inputTypes, &m.InputContextSize, &m.OutputSize, &m.InputPrice, &m.OutputPrice, &m.CacheReadPrice); err != nil {
 			return nil, err
 		}
 		m.Enabled = enabled == 1
 		m.Aliases = decodeAliases(aliases)
+		m.InputTypes = decodeInputTypes(inputTypes)
 		s.items[m.ID] = m
 	}
 	if err := rows.Err(); err != nil {
@@ -139,7 +151,17 @@ func (s *MappingStore) Save(input ModelMapping) (ModelMapping, error) {
 	if err != nil {
 		return ModelMapping{}, err
 	}
-	_, err = s.db.Exec(`INSERT INTO model_mappings(id,client_model,provider_id,upstream_model,enabled,aliases_json) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET client_model=excluded.client_model,provider_id=excluded.provider_id,upstream_model=excluded.upstream_model,enabled=excluded.enabled,aliases_json=excluded.aliases_json`, input.ID, input.ClientModel, input.ProviderID, input.UpstreamModel, input.Enabled, string(aliases))
+	// 输入模态同样在落库前规整一次，读回来的形态与 UI 勾选一致。
+	// 一个都没勾视为未配置：模型默认都有 text 能力，落回 ["text"]。
+	input.InputTypes = normalizeNames(input.InputTypes, "")
+	if len(input.InputTypes) == 0 {
+		input.InputTypes = []string{"text"}
+	}
+	inputTypes, err := json.Marshal(input.InputTypes)
+	if err != nil {
+		return ModelMapping{}, err
+	}
+	_, err = s.db.Exec(`INSERT INTO model_mappings(id,client_model,provider_id,upstream_model,enabled,aliases_json,input_types_json,input_context_size,output_size,input_price,output_price,cache_read_price) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET client_model=excluded.client_model,provider_id=excluded.provider_id,upstream_model=excluded.upstream_model,enabled=excluded.enabled,aliases_json=excluded.aliases_json,input_types_json=excluded.input_types_json,input_context_size=excluded.input_context_size,output_size=excluded.output_size,input_price=excluded.input_price,output_price=excluded.output_price,cache_read_price=excluded.cache_read_price`, input.ID, input.ClientModel, input.ProviderID, input.UpstreamModel, input.Enabled, string(aliases), string(inputTypes), input.InputContextSize, input.OutputSize, input.InputPrice, input.OutputPrice, input.CacheReadPrice)
 	if err != nil {
 		return ModelMapping{}, err
 	}
@@ -319,4 +341,17 @@ func decodeAliases(raw string) []string {
 		return nil
 	}
 	return normalizeNames(names, "")
+}
+
+// decodeInputTypes 读 input_types_json：空串或坏数据一律当「未配置」处理，
+// 与 decodeAliases 的容错口径一致。
+func decodeInputTypes(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var types []string
+	if err := json.Unmarshal([]byte(raw), &types); err != nil {
+		return nil
+	}
+	return normalizeNames(types, "")
 }

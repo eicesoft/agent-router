@@ -40,12 +40,16 @@ func TestMigrateDropsClientModelUnique(t *testing.T) {
 	if strings.Contains(ddl, "UNIQUE") {
 		t.Fatalf("client_model UNIQUE survived migration: %s", ddl)
 	}
-	var id, clientModel, stored string
-	if err := db.QueryRow("SELECT id, client_model, aliases_json FROM model_mappings").Scan(&id, &clientModel, &stored); err != nil {
+	var id, clientModel, stored, inputTypes string
+	if err := db.QueryRow("SELECT id, client_model, aliases_json, input_types_json FROM model_mappings").Scan(&id, &clientModel, &stored, &inputTypes); err != nil {
 		t.Fatal(err)
 	}
 	if id != "old" || clientModel != "gpt-4.1" || !strings.Contains(stored, "legacy-alias") {
 		t.Fatalf("existing row did not survive migration: %s %s %s", id, clientModel, stored)
+	}
+	// 补列出来的空 input_types 要矫正为 ["text"]：模型默认都有 text 能力。
+	if inputTypes != `["text"]` {
+		t.Fatalf("legacy row input types not defaulted to text: %s", inputTypes)
 	}
 	// 迁移的目的：同名第二条能写进去。
 	if _, err := db.Exec("INSERT INTO model_mappings(id, client_model, provider_id, upstream_model, enabled, aliases_json) VALUES('new', 'gpt-4.1', 'azure', 'gpt-4.1-deployment', 1, '[]')"); err != nil {

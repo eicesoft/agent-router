@@ -1104,6 +1104,22 @@ code {
   text-overflow: ellipsis;
   max-width: 100%;
 }
+/* 模型能力元数据：输入类型与容量徽标，仅配置过的卡片占这一行。 */
+.route-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.route-card-meta > span {
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--chip-ink);
+  background: var(--chip-bg);
+  border-radius: 5px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
 /* 同名多提供商时标出 failover 顺位，让用户看得出卡片之间的关系。 */
 .route-chain-row {
   display: flex;
@@ -1608,17 +1624,70 @@ code {
 .provider-drawer .provider-form-note {
   font-size: 11px;
 }
+/* 客户端模型名 label 后的 ? 提示图标：弱化字形，悬停给出默认命名规则说明。 */
+.field-label-help {
+  margin-left: 4px;
+  color: var(--muted-3);
+  cursor: help;
+}
 /* 别名区：输入框 + 添加按钮一行，已添加的别名以 TagGroup 排在下面。
    抽屉里 TagGroup 默认高度偏大，按 11-12px 的紧凑刻度收回一档。 */
-.mapping-alias-field {
+.mapping-alias-field,
+.mapping-meta-field {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.mapping-alias-field > b {
+.mapping-alias-field > b,
+.mapping-meta-field > b {
   font-size: 12px;
   font-weight: 600;
   color: var(--ink-body);
+}
+/* 模型能力：输入类型一排可切换按钮，容量行是输入框 + 快捷按钮。 */
+.mapping-meta-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mapping-meta-label {
+  font-size: 12px;
+  color: var(--muted-3);
+}
+.mapping-type-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mapping-size-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.mapping-size-row .textfield {
+  flex: 1;
+  min-width: 0;
+}
+.mapping-size-row [data-slot="input"] {
+  width: 100%;
+}
+.mapping-size-presets {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+/* 价格三项并排：输入 / 输出 / cache 读，都是同一宽度的小数字输入。 */
+.mapping-price-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.mapping-price-grid .textfield {
+  min-width: 0;
+}
+.mapping-price-grid [data-slot="input"] {
+  width: 100%;
 }
 .mapping-alias-input {
   display: flex;
@@ -1649,11 +1718,207 @@ code {
   background: var(--overlay-scrim) !important;
   -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
+  /* Nested picker opens above the provider drawer overlay (z-index 1000). */
+  z-index: 1100;
 }
 [data-slot="modal-dialog"] {
   background: var(--dialog-bg) !important;
   -webkit-backdrop-filter: blur(24px) saturate(1.15);
   backdrop-filter: blur(24px) saturate(1.15);
+}
+/* 接口类型下拉右侧的「选择供应商」按钮，仅 OpenAI Compatible 时出现。 */
+.provider-kind-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.provider-kind-row .textfield,
+.provider-kind-row .select {
+  flex: 1;
+  min-width: 0;
+}
+.provider-kind-pick {
+  flex-shrink: 0;
+  height: 30px !important;
+  min-height: 30px !important;
+  align-self: flex-end;
+  margin-bottom: 1px;
+}
+/* models.dev 供应商选择弹窗。 */
+.dev-provider-modal .textfield {
+  position: relative;
+}
+.dev-provider-modal [data-slot="input"] {
+  padding-right: 30px !important;
+}
+.dev-provider-search-icon {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted-3);
+  pointer-events: none;
+  display: inline-flex;
+}
+.dev-provider-list {
+  margin-top: 12px;
+  max-height: 52vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dev-provider-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 8px;
+}
+.dev-provider-row:hover {
+  background: var(--well-bg);
+}
+.dev-provider-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+.dev-provider-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-body);
+}
+.dev-provider-api {
+  font-size: 11px;
+  color: var(--muted-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+/* models.dev 模型能力选择弹窗：两行卡片，上行元信息、下行描述 + 能力位。 */
+.dev-model-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+.dev-model-row:hover {
+  background: var(--well-bg);
+}
+.dev-model-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.dev-model-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 42%;
+}
+.dev-model-modalities {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted-3);
+  flex-shrink: 0;
+}
+/* 输入 icons / 输出 icons：两侧都显示，中间 / 分隔。 */
+.dev-model-io {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.dev-model-io-sep {
+  font-size: 11px;
+  color: var(--muted-3);
+  flex-shrink: 0;
+}
+.dev-model-modality {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+.dev-model-meta {
+  font-size: 11px;
+  color: var(--muted-3);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+/* 上下文限制靠右，与左侧名称/模态/日期隔开。 */
+.dev-model-context {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted-3);
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding-left: 8px;
+}
+.dev-model-row-sub {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 16px;
+}
+.dev-model-desc {
+  flex: 1;
+  min-width: 0;
+  height: 16px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--muted-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: default;
+}
+.dev-model-caps {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: var(--muted-3);
+}
+.dev-model-cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
 }
 .provider-drawer-header {
   padding: 25px 25px 18px;
@@ -1780,10 +2045,12 @@ code {
   color: var(--error-ink-strong);
 }
 /* 手动添加模型行（拉不到 /models 的上游只能靠它扩充模型）：与映射抽屉的
-   别名输入同构——TextField 吃满剩余宽度，「添加」按钮贴右侧。 */
+   别名输入同构——TextField 吃满剩余宽度，「添加」图标按钮贴右侧。
+   flex-end 让按钮底边贴输入框底边（TextField 带 label，center 会把按钮
+   撑到 label 那一档）。 */
 .provider-model-manual {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 6px;
 }
 .provider-model-manual .textfield {
@@ -1925,7 +2192,10 @@ code {
 .provider-model-options {
   display: grid;
   width: 100%;
-  gap: 4px;
+  /* 组与组（含首组与上方标题）拉开，分组标题才读得出属于下一组。 */
+  gap: 12px;
+  /* 选择器容器对首项不产生 gap，用 padding 补齐同一节奏。 */
+  padding-top: 8px;
 }
 .provider-model-checkboxes {
   width: 100%;
@@ -1962,6 +2232,8 @@ code {
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  /* 复选行内自带约 16px 顶部空隙，负外边距把标题贴回自己的模型。 */
+  margin-bottom: -8px;
 }
 @keyframes drawer-in {
   from {

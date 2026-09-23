@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 
 	"agent-router/backend/agent"
@@ -103,6 +104,12 @@ func (a *App) Startup(ctx context.Context) {
 	if err := a.proxy.Start(a.gatewayAddr); err != nil {
 		panic(fmt.Errorf("start local proxy: %w", err))
 	}
+	// Keep both models.dev caches fresh on every launch; failures leave the
+	// previous files and the UI still has List* to fall back on.
+	go func() {
+		_ = provider.RefreshDevCatalog(ctx, http.DefaultClient)
+		_ = provider.RefreshDevModels(ctx, http.DefaultClient)
+	}()
 }
 func (a *App) Shutdown(ctx context.Context) { _ = a.proxy.Close(); _ = a.db.Close() }
 
@@ -164,7 +171,99 @@ func (a *App) SetProxyRunning(enabled bool) error {
 }
 
 func (a *App) SaveProvider(input provider.Provider) (provider.Provider, error) {
-	return a.providers.Save(input)
+	saved, err := a.providers.Save(input)
+	if err != nil {
+		return provider.Provider{}, err
+	}
+	a.syncProviderMappingPrices(saved)
+	return saved, nil
+}
+
+// syncProviderMappingPrices copies models.dev list prices onto this provider's
+// mapping rows after a save. Models absent from api.json keep whatever the
+// operator already stored; models present in api.json always overwrite, and
+// routes that were only automatic get persisted so the price sticks.
+func (a *App) syncProviderMappingPrices(p provider.Provider) {
+	prices := provider.DevModelPrices(p.DevID)
+	if len(prices) == 0 {
+		return
+	}
+	for _, upstream := range p.Models {
+		cost, ok := prices[upstream]
+		if !ok {
+			continue
+		}
+		target, found := a.mappingForRoute(p.ID, upstream)
+		if !found {
+			target = config.ModelMapping{
+				ID:            "auto-" + p.ID + "-" + upstream,
+				ClientModel:   defaultClientModel(p, upstream),
+				ProviderID:    p.ID,
+				UpstreamModel: upstream,
+				Enabled:       true,
+				InputTypes:    []string{"text"},
+			}
+		}
+		target.InputPrice = cost.Input
+		target.OutputPrice = cost.Output
+		target.CacheReadPrice = cost.CacheRead
+		// 价格同步失败不应回滚已保存的提供商；下一次保存会再试。
+		_, _ = a.mappings.Save(target)
+	}
+}
+
+func (a *App) mappingForRoute(providerID, upstreamModel string) (config.ModelMapping, bool) {
+	for _, item := range a.mappings.List() {
+		if item.ProviderID == providerID && item.UpstreamModel == upstreamModel {
+			return item, true
+		}
+	}
+	return config.ModelMapping{}, false
+}
+
+// defaultClientModel mirrors proxy.defaultClientModel: prefix/model when the
+// provider sets a model prefix, otherwise "Provider / model".
+func defaultClientModel(p provider.Provider, upstreamModel string) string {
+	if prefix := strings.TrimSpace(p.ModelPrefix); prefix != "" {
+		return prefix + "/" + upstreamModel
+	}
+	return p.Name + " / " + upstreamModel
+}
+
+// ListDevProviders returns the cached models.dev catalog for the provider
+// picker. It never hits the network; RefreshDevProviders does.
+func (a *App) ListDevProviders() []provider.DevProvider {
+	return provider.ListDevCatalog()
+}
+
+// RefreshDevProviders re-downloads models.dev/api.json in the background and
+// returns whatever list is readable once that attempt finishes (fresh file on
+// success, previous cache on failure).
+func (a *App) RefreshDevProviders() []provider.DevProvider {
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_ = provider.RefreshDevCatalog(ctx, http.DefaultClient)
+	return provider.ListDevCatalog()
+}
+
+// ListDevModels returns the cached models.dev model metadata for the
+// capability picker. It never hits the network; RefreshDevModels does.
+func (a *App) ListDevModels() []provider.DevModel {
+	return provider.ListDevModels()
+}
+
+// RefreshDevModels re-downloads models.dev/models.json and returns whatever
+// list is readable once that attempt finishes (fresh file on success,
+// previous cache on failure).
+func (a *App) RefreshDevModels() []provider.DevModel {
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_ = provider.RefreshDevModels(ctx, http.DefaultClient)
+	return provider.ListDevModels()
 }
 
 // FetchProviderIcon downloads favicon artwork for the provider editor.

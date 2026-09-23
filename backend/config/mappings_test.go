@@ -162,3 +162,103 @@ func TestAliasesSurviveReload(t *testing.T) {
 		t.Fatalf("aliases did not survive reload: %#v ok=%v", mapping, ok)
 	}
 }
+
+// 输入类型一个都没勾视为未配置：模型默认都有 text 能力，Save 落回 ["text"]。
+func TestSaveDefaultsInputTypesToText(t *testing.T) {
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store, err := NewMappingStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := store.Save(ModelMapping{ID: "m", ClientModel: "client-model", ProviderID: "p", UpstreamModel: "up", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.InputTypes) != 1 || saved.InputTypes[0] != "text" {
+		t.Fatalf("empty input types should default to text: %#v", saved.InputTypes)
+	}
+}
+
+// 输入类型与上下文/输出大小/单价要能跨重启留存，且 Save 前对输入类型做规整。
+func TestModelMetaSurvivesReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "router.db")
+	db, err := storage.OpenPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewMappingStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := store.Save(ModelMapping{
+		ID: "m", ClientModel: "client-model", ProviderID: "p", UpstreamModel: "up", Enabled: true,
+		InputTypes:       []string{" text ", "image", "text"},
+		InputContextSize: 128000,
+		OutputSize:       32000,
+		InputPrice:       2.5,
+		OutputPrice:      10,
+		CacheReadPrice:   0.25,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := saved.InputTypes; len(got) != 2 || got[0] != "text" || got[1] != "image" {
+		t.Fatalf("input types not normalized: %#v", got)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := storage.OpenPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	reloaded, err := NewMappingStore(reopened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapping, ok := reloaded.Resolve("client-model")
+	if !ok || mapping.InputContextSize != 128000 || mapping.OutputSize != 32000 || len(mapping.InputTypes) != 2 {
+		t.Fatalf("model meta did not survive reload: %#v ok=%v", mapping, ok)
+	}
+	if mapping.InputPrice != 2.5 || mapping.OutputPrice != 10 || mapping.CacheReadPrice != 0.25 {
+		t.Fatalf("prices did not survive reload: %#v", mapping)
+	}
+}
+
+// 三个价格未填写时保持默认 0（= 未设置），不能被写成负数或残留旧值。
+func TestSaveDefaultsPricesToZero(t *testing.T) {
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store, err := NewMappingStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := store.Save(ModelMapping{ID: "m", ClientModel: "client-model", ProviderID: "p", UpstreamModel: "up", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.InputPrice != 0 || saved.OutputPrice != 0 || saved.CacheReadPrice != 0 {
+		t.Fatalf("prices should default to 0: %#v", saved)
+	}
+	// 旧字段不带价格时，Update 不应把已有价格弄丢（Save 是整行覆盖，重新写入 0）。
+	saved.InputPrice = 1.5
+	if _, err := store.Save(saved); err != nil {
+		t.Fatal(err)
+	}
+	saved.InputPrice = 0
+	if _, err := store.Save(saved); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, ok := store.Resolve("client-model")
+	if !ok || reloaded.InputPrice != 0 || reloaded.OutputPrice != 0 || reloaded.CacheReadPrice != 0 {
+		t.Fatalf("explicit zero prices not stored: %#v ok=%v", reloaded, ok)
+	}
+}

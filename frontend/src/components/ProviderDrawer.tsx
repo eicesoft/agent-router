@@ -8,12 +8,17 @@ import {
   TextField,
   Tooltip,
 } from "@heroui/react";
-import { RefreshCw, X } from "lucide-react";
-import { fetchProviderIcon, fetchProviderModels } from "../lib/api";
+import { Building2, Plus, RefreshCw, X } from "lucide-react";
+import {
+  fetchProviderIcon,
+  fetchProviderModels,
+  refreshDevProviders,
+} from "../lib/api";
 import type { AvailableModel, Provider } from "../lib/types";
 import catalog from "../../../backend/provider/catalog.json";
 import { FieldSelect } from "./FieldSelect";
 import { ProviderCredentials } from "./ProviderCredentials";
+import { DevProviderModal } from "./DevProviderModal";
 
 export type ProviderFormState = {
   icon: string;
@@ -24,6 +29,8 @@ export type ProviderFormState = {
   models: string;
   availableModels: AvailableModel[];
   apiKey: string;
+  // models.dev 目录 id：点选供应商时写入，保存时后端据此同步模型价格。
+  devId: string;
 };
 const empty: ProviderFormState = {
   icon: "",
@@ -34,6 +41,7 @@ const empty: ProviderFormState = {
   models: "",
   availableModels: [],
   apiKey: "",
+  devId: "",
 };
 const providerKinds = [
   { key: "openai", label: "OpenAI" },
@@ -144,6 +152,7 @@ export function ProviderDrawer({
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelError, setModelError] = useState("");
   const [manualModelInput, setManualModelInput] = useState("");
+  const [devPickerOpen, setDevPickerOpen] = useState(false);
   const change = (
     key: Exclude<keyof ProviderFormState, "availableModels">,
     value: string,
@@ -167,6 +176,7 @@ export function ProviderDrawer({
     setIconRetry(0);
     setModelError("");
     setManualModelInput("");
+    setDevPickerOpen(false);
     setForm(
       provider
         ? {
@@ -183,10 +193,16 @@ export function ProviderDrawer({
               provider.models,
             ),
             apiKey: "",
+            devId: provider.devId ?? "",
           }
         : empty,
     );
   }, [provider, isOpen]);
+  // 打开抽屉时后台刷新 models.dev 缓存；弹窗下次打开即可读到新列表。
+  useEffect(() => {
+    if (!isOpen) return;
+    void refreshDevProviders().catch(() => undefined);
+  }, [isOpen]);
   useEffect(() => {
     if (initializing.current) {
       initializing.current = false;
@@ -356,20 +372,40 @@ export function ProviderDrawer({
             <Label>名称</Label>
             <Input placeholder="例如：OpenRouter" />
           </TextField>
-          <FieldSelect
-            label="接口类型"
-            value={effectiveKind}
-            onChange={(key) => {
-              if (key) {
-                setKindEdited(true);
-                change("kind", key);
-              }
-            }}
-            options={providerKinds.map((kind) => ({
-              value: kind.key,
-              label: kind.label,
-            }))}
-          />
+          <div className="provider-kind-row">
+            <FieldSelect
+              label="接口类型"
+              value={effectiveKind}
+              onChange={(key) => {
+                if (key) {
+                  setKindEdited(true);
+                  change("kind", key);
+                }
+              }}
+              options={providerKinds.map((kind) => ({
+                value: kind.key,
+                label: kind.label,
+              }))}
+              fullWidth
+            />
+            {effectiveKind === "compatible" && (
+              <Tooltip>
+                <Tooltip.Trigger>
+                  <Button
+                    isIconOnly
+                    size="sm"
+                    variant="outline"
+                    className="provider-kind-pick"
+                    aria-label="选择供应商"
+                    onPress={() => setDevPickerOpen(true)}
+                  >
+                    <Building2 size={15} />
+                  </Button>
+                </Tooltip.Trigger>
+                <Tooltip.Content>选择供应商</Tooltip.Content>
+              </Tooltip>
+            )}
+          </div>
           <TextField
             value={form.baseUrl}
             onChange={(value) => change("baseUrl", value)}
@@ -571,12 +607,14 @@ export function ProviderDrawer({
                 />
               </TextField>
               <Button
+                isIconOnly
                 size="sm"
                 variant="outline"
                 isDisabled={!manualModelInput.trim()}
                 onPress={addManualModels}
+                aria-label="添加"
               >
-                添加
+                <Plus size={15} />
               </Button>
             </div>
           </section>
@@ -600,6 +638,22 @@ export function ProviderDrawer({
             {provider ? "保存修改" : "添加提供商"}
           </Button>
         </div>
+        <DevProviderModal
+          isOpen={devPickerOpen}
+          onClose={() => setDevPickerOpen(false)}
+          onSelect={(picked) => {
+            change("baseUrl", picked.api);
+            // 关联 models.dev 条目：保存时后端按此 id 从 api.json 同步价格。
+            change("devId", picked.id);
+            // models.dev 官方 logo；标为手动地址，避免 favicon 自动抓取覆盖。
+            iconRequest.current += 1;
+            setLoadingIcon(false);
+            setIconStatus("");
+            setManualIcon(true);
+            change("icon", `https://models.dev/logos/${picked.id}.svg`);
+            setDevPickerOpen(false);
+          }}
+        />
       </aside>
     </div>
   );

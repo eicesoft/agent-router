@@ -12,7 +12,30 @@ export type Provider = {
   // How the gateway picks among this provider's keys. Empty means the default
   // ("session").
   credentialMode: string;
+  // models.dev 目录 id（提供商选择器写入）。空表示未关联，保存时不同步价格。
+  devId: string;
   updatedAt: string;
+};
+// models.dev 目录条目。models 字段在后端丢弃，不进入 UI。
+export type DevProvider = {
+  id: string;
+  env: string[];
+  npm: string;
+  api: string;
+  name: string;
+  doc: string;
+};
+// models.dev 模型能力元数据（models.json 本地缓存），供映射抽屉回填能力字段。
+export type DevModel = {
+  id: string;
+  name: string;
+  description: string;
+  reasoning: boolean;
+  toolCall: boolean;
+  structuredOutput: boolean;
+  releaseDate: string;
+  modalities: { input: string[]; output: string[] };
+  limit: { context: number; output: number };
 };
 // One upstream API key in a provider's pool. The secret itself never leaves the
 // OS Keychain, so this carries no key material at all. Mask is the derived
@@ -42,6 +65,15 @@ export type ModelMapping = {
   // /v1/models 与生成的 CLI 配置中。
   aliases: string[];
   enabled: boolean;
+  // 模型元数据，仅供配置与列表展示，网关路由不消费。
+  // 大小单位为 tokens，0 表示未设置。
+  inputTypes: string[];
+  inputContextSize: number;
+  outputSize: number;
+  // 单价仅配置与展示，单位 USD / 百万 tokens，默认 0（未设置）；网关不据此计费。
+  inputPrice: number;
+  outputPrice: number;
+  cacheReadPrice: number;
 };
 export type LocalAPIKey = {
   id: string;

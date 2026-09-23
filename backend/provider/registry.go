@@ -35,7 +35,10 @@ type Provider struct {
 	// keys: session stickiness, round robin, least used, or random. Empty is
 	// normalized to session by the pool.
 	CredentialMode string `json:"credentialMode"`
-	UpdatedAt      string `json:"updatedAt"`
+	// DevID is the models.dev catalog id chosen in the provider picker. Empty
+	// means no catalog link, so SaveProvider skips the api.json price sync.
+	DevID     string `json:"devId"`
+	UpdatedAt string `json:"updatedAt"`
 }
 
 // AvailableModel retains the upstream identifier and its creation timestamp so
@@ -121,7 +124,7 @@ func (r *Registry) load() error {
 	if err := deletedRows.Err(); err != nil {
 		return err
 	}
-	rows, err := r.db.Query(`SELECT id,name,kind,base_url,api_key_ref,icon,model_prefix,enabled,models_json,available_models_json,credential_mode,updated_at FROM providers`)
+	rows, err := r.db.Query(`SELECT id,name,kind,base_url,api_key_ref,icon,model_prefix,enabled,models_json,available_models_json,credential_mode,dev_id,updated_at FROM providers`)
 	if err != nil {
 		return err
 	}
@@ -130,7 +133,7 @@ func (r *Registry) load() error {
 		var p Provider
 		var enabled int
 		var models, availableModels string
-		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKeyRef, &p.Icon, &p.ModelPrefix, &enabled, &models, &availableModels, &p.CredentialMode, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.BaseURL, &p.APIKeyRef, &p.Icon, &p.ModelPrefix, &enabled, &models, &availableModels, &p.CredentialMode, &p.DevID, &p.UpdatedAt); err != nil {
 			return err
 		}
 		p.Enabled = enabled == 1
@@ -201,16 +204,17 @@ func (r *Registry) Save(p Provider) (Provider, error) {
 		p.Icon = string(p.Kind)
 	}
 	// A caller that does not carry the field (older UI payloads, automatic
-	// catalog seeding) must not silently reset an operator's chosen strategy.
-	// The mirror is read under the lock: Save itself locks later, and reading
-	// r.items unlocked here would race with concurrent saves.
-	if p.CredentialMode == "" {
-		r.mu.RLock()
-		existing, ok := r.items[p.ID]
-		r.mu.RUnlock()
-		if ok {
-			p.CredentialMode = existing.CredentialMode
-		}
+	// catalog seeding) must not silently reset an operator's chosen strategy
+	// or models.dev link. The mirror is read under the lock: Save itself locks
+	// later, and reading r.items unlocked here would race with concurrent saves.
+	r.mu.RLock()
+	existing, hasExisting := r.items[p.ID]
+	r.mu.RUnlock()
+	if p.CredentialMode == "" && hasExisting {
+		p.CredentialMode = existing.CredentialMode
+	}
+	if p.DevID == "" && hasExisting {
+		p.DevID = existing.DevID
 	}
 	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	models, _ := json.Marshal(p.Models)
@@ -222,7 +226,7 @@ func (r *Registry) Save(p Provider) (Provider, error) {
 		return Provider{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT INTO providers(id,name,kind,base_url,api_key_ref,icon,model_prefix,enabled,models_json,available_models_json,credential_mode,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,base_url=excluded.base_url,api_key_ref=excluded.api_key_ref,icon=excluded.icon,model_prefix=excluded.model_prefix,enabled=excluded.enabled,models_json=excluded.models_json,available_models_json=excluded.available_models_json,credential_mode=excluded.credential_mode,updated_at=excluded.updated_at`, p.ID, p.Name, p.Kind, p.BaseURL, p.APIKeyRef, p.Icon, p.ModelPrefix, p.Enabled, string(models), string(availableModels), p.CredentialMode, p.UpdatedAt); err != nil {
+	if _, err := tx.Exec(`INSERT INTO providers(id,name,kind,base_url,api_key_ref,icon,model_prefix,enabled,models_json,available_models_json,credential_mode,dev_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,base_url=excluded.base_url,api_key_ref=excluded.api_key_ref,icon=excluded.icon,model_prefix=excluded.model_prefix,enabled=excluded.enabled,models_json=excluded.models_json,available_models_json=excluded.available_models_json,credential_mode=excluded.credential_mode,dev_id=excluded.dev_id,updated_at=excluded.updated_at`, p.ID, p.Name, p.Kind, p.BaseURL, p.APIKeyRef, p.Icon, p.ModelPrefix, p.Enabled, string(models), string(availableModels), p.CredentialMode, p.DevID, p.UpdatedAt); err != nil {
 		return Provider{}, err
 	}
 	if _, err := tx.Exec(`DELETE FROM deleted_providers WHERE id = ?`, p.ID); err != nil {

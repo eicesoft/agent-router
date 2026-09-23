@@ -71,7 +71,7 @@ React UI → App 方法（Wails 绑定）
 | 路径 | 用途 |
 |---|---|
 | `main.go` / `app.go` | Wails 引擎 / `App` 门面（全部 Wails 绑定 + 组合根） |
-| `backend/provider/` | Provider 类型、`Registry`、内嵌 `catalog.json` 内置目录 |
+| `backend/provider/` | Provider 类型、`Registry`、内嵌 `catalog.json` 内置目录；`modelsdev.go` 缓存 models.dev `api.json`（`ListDevCatalog`/`RefreshDevCatalog`，原文件落盘，解析时丢弃 `models`）与 `models.json`（`ListDevModels`/`RefreshDevModels`，映射抽屉的模型能力选择） |
 | `backend/config/` | `ModelMapping` + `MappingStore`（模型 → 提供商解析；`ClientModel` 与 `Aliases` 等价命中，别名不对外列出。`ResolveAll` 返回同名多提供商的整条 failover 链，`Resolve` 只返回链首；`ChainModeFor`/`SetChainMode` 管链级起点策略） |
 | `backend/apikey/` | 网关自身 key 的 `Store`（客户端 `ar-` 前缀密钥认证） |
 | `backend/envcfg/` | 把网关 key 写入用户 shell 环境（`AGENT_ROUTER_API_KEY`），跨平台 |
@@ -111,7 +111,7 @@ React UI → App 方法（Wails 绑定）
 ## 重要文件
 
 - `main.go` —— Wails 引导；`go:embed all:frontend/dist`；绑定 `*App`；1440×900
-- `app.go` —— `App` 门面、`NewApp()` 组合、`Bootstrap`、全部 Wails 绑定方法（`GetBootstrap`、`SaveProvider`、`ToggleProvider`、`SetProviderAPIKey`、凭据池绑定 `ListProviderCredentials`/`AddProviderCredential`/`UpdateProviderCredential`/`DeleteProviderCredential`/`ToggleProviderCredential`/`ResetProviderCredentialStatus`/`SetProviderCredentialMode`、`SaveModelMapping`、`SaveAgentPreset`、`ResolveModel`、`ListToolTemplates`、`RenderToolTemplate`、`WriteToolTemplate`、`ExportLocalAPIKeyEnv`、`GatewayHost`、`ListSkills`/`GetSkill`/`ToggleSkill`/`DeleteSkill`/`SaveSkillBody`、`ListSkillLinks`/`SetSkillLink`）
+- `app.go` —— `App` 门面、`NewApp()` 组合、`Bootstrap`、全部 Wails 绑定方法（`GetBootstrap`、`SaveProvider`、`ToggleProvider`、`SetProviderAPIKey`、凭据池绑定 `ListProviderCredentials`/`AddProviderCredential`/`UpdateProviderCredential`/`DeleteProviderCredential`/`ToggleProviderCredential`/`ResetProviderCredentialStatus`/`SetProviderCredentialMode`、`ListDevProviders`/`RefreshDevProviders`、`ListDevModels`/`RefreshDevModels`、`SaveModelMapping`、`SaveAgentPreset`、`ResolveModel`、`ListToolTemplates`、`RenderToolTemplate`、`WriteToolTemplate`、`ExportLocalAPIKeyEnv`、`GatewayHost`、`ListSkills`/`GetSkill`/`ToggleSkill`/`DeleteSkill`/`SaveSkillBody`、`ListSkillLinks`/`SetSkillLink`）
 - `backend/credential/pool.go` —— 凭据池存储与健康状态；`selector.go` —— 选择策略与会话指纹
 - `backend/proxy/server.go` —— `GET /health`、`GET /v1/models`、`POST /v1/chat/completions`、`POST /v1/messages`、`POST /v1/responses`；监听 `127.0.0.1:9400`
 - `backend/proxy/responses.go` —— `/v1/responses` handler 与 Responses→Chat Completions 请求转换（`toChat`、`toolPlan` 工具名双向映射、`responsesToolsToChat`/`flattenNamespace` 展开 namespace 与 `additional_tools`）；`responses_stream.go` —— 响应转换（`pipeChatStreamToResponses` 合成 SSE、`chatResponseToResponses` 非流式）

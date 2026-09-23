@@ -18,7 +18,7 @@ func TestRegistryPersistsAvailableAndEnabledModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := Provider{ID: "catalog-test", Name: "Catalog Test", Kind: KindCompatible, BaseURL: "https://example.com/v1", Models: []string{"gpt-4.1"}, AvailableModels: []AvailableModel{{ID: "gpt-4o-mini", Created: 200}, {ID: "gpt-4.1", Created: 100}}}
+	input := Provider{ID: "catalog-test", Name: "Catalog Test", Kind: KindCompatible, BaseURL: "https://example.com/v1", DevID: "openai", Models: []string{"gpt-4.1"}, AvailableModels: []AvailableModel{{ID: "gpt-4o-mini", Created: 200}, {ID: "gpt-4.1", Created: 100}}}
 	if _, err := registry.Save(input); err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +44,16 @@ func TestRegistryPersistsAvailableAndEnabledModels(t *testing.T) {
 	}
 	if !reflect.DeepEqual(actual.AvailableModels, input.AvailableModels) {
 		t.Fatalf("available models = %#v, want %#v", actual.AvailableModels, input.AvailableModels)
+	}
+	if actual.DevID != "openai" {
+		t.Fatalf("devId = %q, want openai", actual.DevID)
+	}
+	// 旧 UI 不带 devId 时不能清掉已关联的 models.dev 条目。
+	if _, err := reloaded.Save(Provider{ID: input.ID, Name: input.Name, Kind: input.Kind, BaseURL: input.BaseURL, Models: input.Models}); err != nil {
+		t.Fatal(err)
+	}
+	if kept, _ := reloaded.Get(input.ID); kept.DevID != "openai" {
+		t.Fatalf("devId cleared by payload without field: %q", kept.DevID)
 	}
 }
 

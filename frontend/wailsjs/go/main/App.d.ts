@@ -42,6 +42,10 @@ export function GetSkill(arg1:string):Promise<skills.Detail>;
 
 export function GetUsageBreakdown():Promise<usage.Breakdown>;
 
+export function ListDevModels():Promise<Array<provider.DevModel>>;
+
+export function ListDevProviders():Promise<Array<provider.DevProvider>>;
+
 export function ListProviderCredentials(arg1:string):Promise<Array<credential.Credential>>;
 
 export function ListRequestLogs(arg1:number,arg2:number,arg3:usage.RequestLogFilter):Promise<usage.RequestLogPage>;
@@ -55,6 +59,10 @@ export function ListToolTemplates():Promise<Array<templates.Preview>>;
 export function LocalAPIKeyEnvStatus(arg1:string):Promise<envcfg.Status>;
 
 export function PlaygroundChat(arg1:string,arg2:string,arg3:Array<proxy.Message>,arg4:string):Promise<main.PlaygroundResult>;
+
+export function RefreshDevModels():Promise<Array<provider.DevModel>>;
+
+export function RefreshDevProviders():Promise<Array<provider.DevProvider>>;
 
 export function RenderToolTemplate(arg1:templates.ToolID,arg2:Record<string, string>,arg3:Array<string>):Promise<templates.Preview>;
 
