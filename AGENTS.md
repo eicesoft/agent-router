@@ -100,6 +100,7 @@ React UI → App 方法（Wails 绑定）
 - 后端调用只经 `frontend/src/lib/api.ts`，直接访问 `(window as any).go?.main?.App` 并带浏览器端 demo 回退——**不**导入生成的 `wailsjs` 模块。
 - `frontend/src/lib/types.ts` 手工镜像 Go 结构体（`Provider`、`ModelMapping`、`AgentPreset`、`Usage`、`Bootstrap`），需手动与 Go 侧保持同步。
 - 样式：HeroUI + Tailwind v3，但外观集中在手写 `frontend/src/styles.css`（语义化 kebab-case 类名，对 HeroUI 用 `!important` 覆盖）；新 UI 沿用该文件的语义类名模式。
+- **组件优先用 HeroUI（`@heroui/react`）**：HeroUI 已有的组件直接用，不要自己实现；没有现成组件时，优先考虑用 HeroUI 基础组件组合出新组件，而不是从零手写。
 
 ## 测试与 QA
 
