@@ -645,6 +645,9 @@ export namespace templates {
 	export class Model {
 	    id: string;
 	    name: string;
+	    inputContextSize?: number;
+	    outputSize?: number;
+	    inputTypes?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Model(source);
@@ -654,6 +657,9 @@ export namespace templates {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.name = source["name"];
+	        this.inputContextSize = source["inputContextSize"];
+	        this.outputSize = source["outputSize"];
+	        this.inputTypes = source["inputTypes"];
 	    }
 	}
 	export class ModelSlot {

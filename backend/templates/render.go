@@ -154,7 +154,9 @@ func gatewayBody(g *Generator) []byte {
 	yamlSet(entry, "apiKey", yamlScalar(envFor(g.providerName)))
 	yamlSet(entry, "api", yamlScalar("openai-completions"))
 	yamlSet(entry, "auth", yamlScalar("apiKey"))
-	yamlSet(entry, "models", ompModels(g.routable))
+	// 与 mergeOMP 的 fresh 路径同源用 g.models()：用 g.routable 会在字节拼接
+	// 路径上把用户收窄过的勾选静默扩成全量。
+	yamlSet(entry, "models", ompModels(g.models()))
 	return []byte(marshalOMP(document))
 }
 
@@ -175,15 +177,25 @@ func mergeProvider(document *doc, g *Generator, t Tool) {
 	}
 }
 
-// mergeAIIDSK handles opencode/mimocode: provider.<name>{npm,options,models}.
+// mergeAIIDSK handles opencode/mimocode/kilo: provider.<name>{npm,options,models}.
 // The tool supports multiple providers, so the gateway is merged alongside the
-// user's existing ones.
+// user's existing ones. Per-model window sizes and capabilities flow from the
+// mapping's metadata; an unset field (0 / empty) is left unwritten so output
+// stays identical to before metadata existed.
 func mergeAIIDSK(document *doc, g *Generator) {
 	providers := document.object("provider")
 	models := newDoc()
 	for _, m := range g.models() {
 		entry := newDoc()
 		entry.set("name", m.Name)
+		if limit := aiSDKLimit(m); limit != nil {
+			entry.set("limit", limit)
+		}
+		if len(m.InputTypes) > 0 {
+			input := aiSDKInput(m.InputTypes)
+			entry.set("attachment", anyNonText(input))
+			entry.set("modalities", ordered("input", input))
+		}
 		models.set(m.ID, entry)
 	}
 	providers.set(g.providerName, ordered(
@@ -231,15 +243,84 @@ func ordered(keysAndValues ...any) *doc {
 	return d
 }
 
+// piModels renders pi's model list per its models.json schema: contextWindow
+// and maxTokens carry the mapping's configured window sizes (pi uses them for
+// compaction and output caps), input carries the configured capabilities, and
+// an unset size (0) omits its key so pi falls back to its bundled catalog.
 func piModels(models []Model) []any {
 	out := make([]any, 0, len(models))
 	for _, m := range models {
-		out = append(out, ordered(
+		entry := ordered(
 			"id", m.ID,
 			"name", m.Name,
-			"input", []string{"text"},
+			"input", textImageInput(m.InputTypes),
 			"reasoning", true,
-		))
+		)
+		if m.InputContextSize > 0 {
+			entry.set("contextWindow", m.InputContextSize)
+		}
+		if m.OutputSize > 0 {
+			entry.set("maxTokens", m.OutputSize)
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// aiSDKLimit builds the ai-sdk shape's limit object, but only when both sizes
+// are configured: kilo/opencode require context and output together inside
+// limit, so a half-set object would fail validation.
+func aiSDKLimit(m Model) *doc {
+	if m.InputContextSize <= 0 || m.OutputSize <= 0 {
+		return nil
+	}
+	return ordered("context", m.InputContextSize, "output", m.OutputSize)
+}
+
+// aiSDKInput narrows the mapping's capabilities to the literals the ai-sdk
+// shape accepts (text/audio/image/video/pdf — there is no "file"; a configured
+// file capability is expressed as pdf, the only document type these tools
+// handle), and a model with nothing left still needs text.
+func aiSDKInput(types []string) []string {
+	out := make([]string, 0, len(types))
+	for _, t := range types {
+		switch t {
+		case "text", "audio", "image", "video":
+			out = append(out, t)
+		case "file":
+			out = append(out, "pdf")
+		}
+	}
+	if len(out) == 0 {
+		return []string{"text"}
+	}
+	return out
+}
+
+// anyNonText reports whether an input capability list contains anything beyond
+// text — that is what attachment means in the ai-sdk shape (opencode derives
+// it from input_modalities.some(t => t !== "text") when the upstream says).
+func anyNonText(input []string) bool {
+	for _, t := range input {
+		if t != "text" {
+			return true
+		}
+	}
+	return false
+}
+
+// textImageInput narrows capabilities to the literals pi's and omp's schemas
+// accept ("text" | "image"): audio/video/file would fail validation, and a
+// model with nothing left still needs text.
+func textImageInput(types []string) []string {
+	out := make([]string, 0, len(types))
+	for _, t := range types {
+		if t == "text" || t == "image" {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return []string{"text"}
 	}
 	return out
 }

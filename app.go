@@ -615,7 +615,7 @@ func (a *App) ListToolTemplates() []templates.Preview {
 // RenderToolTemplate re-renders one tool's preview with explicit selections,
 // so the UI can update the diff before the user confirms a write. slotModels
 // carries per-slot picks (Claude Code); modelIDs the enabled flat-list subset
-// (nil = all) for multi-provider tools.
+// (nil = the on-disk baseline, all when the config has no gateway entry yet).
 func (a *App) RenderToolTemplate(id templates.ToolID, slotModels map[string]string, modelIDs []string) (templates.Preview, error) {
 	for _, tool := range templates.Tools() {
 		if tool.ID == id {
@@ -639,6 +639,11 @@ func (a *App) WriteToolTemplate(id templates.ToolID, slotModels map[string]strin
 
 func (a *App) previewTemplate(g *templates.Generator, tool templates.Tool) templates.Preview {
 	tool = templates.Resolve(tool)
+	// The checklist and the rendered content must start from the same baseline:
+	// the subset last written under the gateway's entry (no-op when the caller
+	// already passed an explicit selection). Rendering without it would show a
+	// diff that "adds back" every model the user unchecked.
+	g = g.WithBaseline(tool)
 	current, _ := os.ReadFile(tool.Config)
 	slots := tool.ModelSlots
 	if slots == nil {
@@ -691,11 +696,18 @@ func (a *App) catalogAliases() map[string][]string {
 
 // routableModels flattens the proxy's effective mappings into the client
 // models the templates list — both id and name set to the mapped client model
-// name, the exact identifier the gateway can route.
+// name, the exact identifier the gateway can route — and carries each
+// mapping's window sizes and input capabilities through for the pi renderer.
 func (a *App) routableModels() []templates.Model {
 	out := make([]templates.Model, 0, 8)
 	for _, m := range a.proxy.EffectiveMappings() {
-		out = append(out, templates.Model{ID: m.ClientModel, Name: m.ClientModel})
+		out = append(out, templates.Model{
+			ID:               m.ClientModel,
+			Name:             m.ClientModel,
+			InputContextSize: m.InputContextSize,
+			OutputSize:       m.OutputSize,
+			InputTypes:       m.InputTypes,
+		})
 	}
 	return out
 }

@@ -2774,10 +2774,11 @@ function AgentTemplates({
       Object.entries(merged).filter(([, v]) => v !== ""),
     );
   };
-  // Default checked set comes from the backend: ai-sdk/pi list candidates so they
-  // default to every routable model, while Codex's checklist chooses which
-  // --profile files to generate and defaults to what is already on disk. Falling
-  // back to "all" here would write dozens of files on first open.
+  // Default checked set comes from the backend: flat-list tools report the
+  // subset last written to disk (every candidate only before the first write),
+  // while Codex's checklist chooses which --profile files to generate and
+  // defaults to what is already on disk. Falling back to "all" here would
+  // write dozens of files on first open.
   const selectedModels = (tool: ToolPreview): string[] =>
     modelOverrides[tool.id] ??
     tool.selectedModels ??
@@ -2819,7 +2820,10 @@ function AgentTemplates({
     const cleaned = Object.fromEntries(
       Object.entries(merged).filter(([, v]) => v !== ""),
     );
-    await applyRender(toolId, cleaned);
+    // Carry unsaved checkbox toggles into the re-render: without them the
+    // backend falls back to the on-disk baseline and the preview drifts from
+    // the checklist.
+    await applyRender(toolId, cleaned, modelOverrides[toolId]);
   };
   const toggleModel = async (toolId: string, modelId: string, on: boolean) => {
     const tool = previews.find((t) => t.id === toolId);

@@ -36,6 +36,9 @@ func mergeOMP(document *yaml.Node, g *Generator) {
 	yamlSet(entry, "models", ompModels(g.models()))
 }
 
+// ompModels renders omp's model list. Window sizes come from the mapping's
+// metadata (0 = unset, key omitted so omp falls back to its bundled catalog);
+// input is narrowed to the literals omp accepts — text and image, same as pi.
 func ompModels(models []Model) *yaml.Node {
 	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 	for _, m := range models {
@@ -44,8 +47,16 @@ func ompModels(models []Model) *yaml.Node {
 		yamlSet(item, "name", yamlScalar(m.Name))
 		yamlSet(item, "reasoning", yamlScalar("true"))
 		input := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle}
-		input.Content = append(input.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "text"})
+		for _, t := range textImageInput(m.InputTypes) {
+			input.Content = append(input.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: t})
+		}
 		yamlSet(item, "input", input)
+		if m.InputContextSize > 0 {
+			yamlSet(item, "contextWindow", yamlScalar(strconv.Itoa(m.InputContextSize)))
+		}
+		if m.OutputSize > 0 {
+			yamlSet(item, "maxTokens", yamlScalar(strconv.Itoa(m.OutputSize)))
+		}
 		seq.Content = append(seq.Content, item)
 	}
 	return seq

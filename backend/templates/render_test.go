@@ -217,6 +217,88 @@ func TestPICompatSessionAffinity(t *testing.T) {
 	}
 }
 
+// TestPIModelMetadata guards the mapping metadata flowing into pi's config:
+// window sizes map to contextWindow / maxTokens, capabilities are narrowed to
+// pi's accepted input literals, and unset sizes stay out of the document so pi
+// falls back to its bundled catalog.
+func TestPIModelMetadata(t *testing.T) {
+	g := NewGenerator("http://127.0.0.1:9400", "agent-router", []Model{
+		{ID: "m1", Name: "m1", InputContextSize: 200000, OutputSize: 64000,
+			InputTypes: []string{"text", "image", "audio"}},
+		{ID: "m2", Name: "m2"},
+	})
+
+	document := newDoc()
+	mergePI(document, g)
+	out, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+
+	// Capabilities keep pi's accepted literals only; audio fails its schema.
+	if !strings.Contains(s, `"input":["text","image"]`) {
+		t.Errorf("narrowed input capabilities missing:\n%s", s)
+	}
+	if strings.Contains(s, "audio") {
+		t.Errorf("unsupported input literal leaked into pi config:\n%s", s)
+	}
+	// Configured window sizes land as pi's field names.
+	if !strings.Contains(s, `"contextWindow":200000`) {
+		t.Errorf("contextWindow missing for configured model:\n%s", s)
+	}
+	if !strings.Contains(s, `"maxTokens":64000`) {
+		t.Errorf("maxTokens missing for configured model:\n%s", s)
+	}
+	// Unset sizes omit the keys entirely instead of writing zeros.
+	if !strings.Contains(s, `{"id":"m2","name":"m2","input":["text"],"reasoning":true}`) {
+		t.Errorf("unset metadata must render the bare entry:\n%s", s)
+	}
+}
+
+// TestAIIDSKModelMetadata guards the mapping metadata flowing into the ai-sdk
+// shape (opencode/mimocode/kilo): window sizes land as limit.{context,output}
+// together, capabilities as modalities.input narrowed to the accepted literals
+// (file becomes pdf), attachment flags any non-text input, and a model without
+// metadata renders exactly as it did before metadata existed.
+func TestAIIDSKModelMetadata(t *testing.T) {
+	g := NewGenerator("http://127.0.0.1:9400", "agent-router", []Model{
+		{ID: "m1", Name: "m1", InputContextSize: 200000, OutputSize: 64000,
+			InputTypes: []string{"text", "image", "video", "file"}},
+		{ID: "m2", Name: "m2", InputContextSize: 128000}, // output unset: no limit
+		{ID: "m3", Name: "m3"},
+	})
+
+	document := newDoc()
+	mergeAIIDSK(document, g)
+	out, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+
+	if !strings.Contains(s, `"limit":{"context":200000,"output":64000}`) {
+		t.Errorf("limit missing for configured model:\n%s", s)
+	}
+	if !strings.Contains(s, `"modalities":{"input":["text","image","video","pdf"]}`) {
+		t.Errorf("narrowed modalities missing (file must map to pdf):\n%s", s)
+	}
+	if !strings.Contains(s, `"attachment":true`) {
+		t.Errorf("attachment must flag non-text input:\n%s", s)
+	}
+	// limit requires both sizes: a context-only model stays bare.
+	if strings.Contains(s, `"m2","attachment"`) && strings.Contains(s, `"m2"`) {
+		// checked below via the full-entry assertion instead
+	}
+	if !strings.Contains(s, `{"name":"m2"}`) {
+		t.Errorf("context-only model must not get a half-set limit:\n%s", s)
+	}
+	// No metadata at all: the entry stays exactly as before metadata existed.
+	if !strings.Contains(s, `{"name":"m3"}`) {
+		t.Errorf("metadata-free model must render the bare entry:\n%s", s)
+	}
+}
+
 // TestWriteBacksUp guards the pre-write backup rule: writing over an existing
 // config leaves a timestamped copy beside it before the merge lands.
 func TestWriteBacksUp(t *testing.T) {

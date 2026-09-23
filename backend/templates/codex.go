@@ -256,10 +256,12 @@ func (g *Generator) routableModel(id string) (Model, bool) {
 	return Model{}, false
 }
 
-// SelectedModels 返回 UI 勾选列表应有的初始值，按 tool 的语义分派：ai-sdk/pi 类
-// 默认全选（候选清单），codex 默认取磁盘现状或默认模型（生成哪些文件）。前端据此
+// SelectedModels 返回 UI 勾选列表应有的初始值，按 tool 的语义分派：平铺清单类
+// （ai-sdk/pi/omp）回读磁盘上本网关已写入的子集，配置里还没有本网关条目（首次
+// 使用）才默认全选；codex 默认取磁盘现状或默认模型（生成哪些文件）。前端据此
 // 渲染，不必自己猜规则。
 func (g *Generator) SelectedModels(t Tool) []string {
+	g = g.WithBaseline(t)
 	models := g.models()
 	if t.Shape == "codex-toml" {
 		models = g.codexProfileModels(t)

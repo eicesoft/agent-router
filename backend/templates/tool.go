@@ -217,11 +217,12 @@ type Preview struct {
 	// the UI can show which `--profile` names become available.
 	Profiles []ProfilePreview `json:"profiles"`
 	// SelectedModels is the initial checked set for the model checklist. Its
-	// meaning depends on the tool: for ai-sdk/pi it defaults to every routable
-	// model (the config lists candidates), for Codex it comes from the profiles
-	// already on disk (the checklist chooses which files to generate, and
-	// defaulting to all would write dozens). The UI must start from this rather
-	// than assuming "all", or the two meanings cannot both be right.
+	// meaning depends on the tool: for flat-list shapes (ai-sdk/pi/omp) it is
+	// the subset already written under the gateway's entry — every routable
+	// model only when the config has no gateway entry yet — for Codex it comes
+	// from the profiles already on disk (the checklist chooses which files to
+	// generate, and defaulting to all would write dozens). The UI must start
+	// from this rather than assuming "all", or the meanings cannot both be right.
 	SelectedModels []string `json:"selectedModels"`
 }
 
@@ -245,10 +246,16 @@ type Generator struct {
 }
 
 // Model is one routable client model: the id resolvable by the gateway and its
-// human-readable display name.
+// human-readable display name. The metadata fields mirror what the mapping
+// configured for it; 0 / empty means unset and the pi renderer omits the key,
+// leaving pi's bundled catalog defaults in place.
 type Model struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+
+	InputContextSize int      `json:"inputContextSize,omitempty"`
+	OutputSize       int      `json:"outputSize,omitempty"`
+	InputTypes       []string `json:"inputTypes,omitempty"`
 }
 
 func NewGenerator(gateway, providerName string, routable []Model) *Generator {
