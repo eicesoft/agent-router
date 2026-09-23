@@ -1,20 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  Button,
-  Chip,
-  Label,
-  Popover,
-  ScrollShadow,
-  Slider,
-  TextArea,
-} from "@heroui/react";
+import { Label, Popover, Slider } from "@heroui/react";
 import {
   Brain,
+  Check,
   ChevronDown,
   ChevronUp,
   Send,
   Sparkle,
   Square,
+  Terminal,
+  Wrench,
 } from "lucide-react";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 import { cancelPlayground, playgroundChat } from "../lib/api";
@@ -27,14 +22,28 @@ import type {
   Provider,
 } from "../lib/types";
 import { FieldSelect } from "./FieldSelect";
+import { JsonBlock } from "./JsonBlock";
 
-type Turn = { role: "user" | "assistant"; text: string; reasoning?: string };
+type ToolCall = { id: string; name: string; arguments: string };
+type Turn = {
+  role: "user" | "assistant";
+  text: string;
+  reasoning?: string;
+  toolCalls?: ToolCall[];
+};
 
 // One SSE frame, kept raw so the panel shows exactly what the gateway sent.
 type Frame = { data: string; kind: FrameKind };
 type FrameKind = "text" | "reasoning" | "tool" | "usage" | "done" | "other";
 
-// classify labels a frame for coloring; the payload itself is never rewritten.
+type ToolDelta = {
+  index: number;
+  id?: string;
+  name?: string;
+  arguments?: string;
+};
+
+// classify labels a frame for the debugging view; the payload is never rewritten.
 function classify(data: string): FrameKind {
   if (data === "[DONE]") return "done";
   let chunk: any;
@@ -52,7 +61,6 @@ function classify(data: string): FrameKind {
   return "other";
 }
 
-// textFrom returns the assistant-visible text carried by one frame.
 function textFrom(data: string): string {
   try {
     const chunk = JSON.parse(data);
@@ -63,10 +71,8 @@ function textFrom(data: string): string {
   }
 }
 
-// reasoningFrom returns the thinking text carried by one frame. Upstreams spell
-// it reasoning_content (DeepSeek/vLLM) or reasoning (some gateways); the gateway
-// rewrites an Anthropic upstream's thinking_delta into reasoning_content too, so
-// this is the single place the chain has to be read.
+// Upstreams spell reasoning differently; Anthropic's thinking_delta is also
+// normalized to reasoning_content by the gateway before it reaches this UI.
 function reasoningFrom(data: string): string {
   try {
     const chunk = JSON.parse(data);
@@ -78,6 +84,55 @@ function reasoningFrom(data: string): string {
   }
 }
 
+function toolDeltasFrom(data: string): ToolDelta[] {
+  try {
+    const chunk = JSON.parse(data);
+    const calls = chunk?.choices?.[0]?.delta?.tool_calls;
+    if (!Array.isArray(calls)) return [];
+    return calls
+      .map((call: any, fallbackIndex: number) => ({
+        index: Number.isFinite(call?.index) ? call.index : fallbackIndex,
+        id: typeof call?.id === "string" ? call.id : undefined,
+        name:
+          typeof call?.function?.name === "string"
+            ? call.function.name
+            : undefined,
+        arguments:
+          typeof call?.function?.arguments === "string"
+            ? call.function.arguments
+            : undefined,
+      }))
+      .filter(
+        (call: ToolDelta) =>
+          call.id || call.name || call.arguments !== undefined,
+      );
+  } catch {
+    return [];
+  }
+}
+
+function mergeToolCalls(current: ToolCall[], deltas: ToolDelta[]): ToolCall[] {
+  const next = [...current];
+  for (const delta of deltas) {
+    const existing = next[delta.index];
+    next[delta.index] = {
+      id: delta.id ?? existing?.id ?? `tool-${delta.index}`,
+      name: delta.name ?? existing?.name ?? "tool",
+      arguments: `${existing?.arguments ?? ""}${delta.arguments ?? ""}`,
+    };
+  }
+  return next;
+}
+
+function toolArguments(raw: string): string {
+  if (!raw.trim()) return "等待参数…";
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+}
+
 // 思考档位。off 不发 reasoning_effort，交给上游默认行为。
 const thinkingLevels = [
   { value: "off", label: "关闭" },
@@ -86,7 +141,6 @@ const thinkingLevels = [
   { value: "high", label: "高" },
 ];
 
-// 思考档位选择器：按钮 + Popover 里的滑块，四档等距，配一行刻度说明。
 function ThinkingPicker({
   level,
   onChange,
@@ -101,11 +155,11 @@ function ThinkingPicker({
   const current = thinkingLevels[index];
   return (
     <Popover>
-      <Popover.Trigger className="playground-thinking-trigger">
+      <Popover.Trigger className="pg-thinking-trigger">
         <Brain size={14} />
-        思考：{current.label}
+        <span>思考 {current.label}</span>
       </Popover.Trigger>
-      <Popover.Content className="playground-thinking-popover">
+      <Popover.Content className="pg-thinking-popover">
         <Popover.Dialog>
           <Slider
             aria-label="思考档位"
@@ -130,14 +184,13 @@ function ThinkingPicker({
   );
 }
 
-// 流式光标：一个呼吸的 AI 小星星，跟着正在输出的文字走。
-function Caret() {
-  return <Sparkle size={12} className="playground-caret" aria-hidden />;
-}
-
-// 思考过程块：默认折叠，摘要里带上还在输出的状态点；展开时随增量实时滚动。
-// open 归组件自己管：流式期间默认展开，用户手动折叠后本轮的更新不再抢回去。
-function Thinking({ text, streaming }: { text: string; streaming: boolean }) {
+function ThinkingTrace({
+  text,
+  streaming,
+}: {
+  text: string;
+  streaming: boolean;
+}) {
   const body = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(streaming);
   useEffect(() => {
@@ -145,35 +198,65 @@ function Thinking({ text, streaming }: { text: string; streaming: boolean }) {
       body.current?.scrollTo({ top: body.current.scrollHeight });
     }
   }, [text, streaming, open]);
+
+  const rows = text.split(/\n+/).filter(Boolean);
   return (
-    <details
-      className="playground-thinking"
-      open={open}
-      onToggle={(e) => setOpen(e.currentTarget.open)}
-    >
-      <summary>
-        <Brain size={13} />
-        {streaming ? "思考中…" : `思考过程（${text.length} 字）`}
-        {streaming && <span className="playground-thinking-dot" />}
-      </summary>
-      <div className="playground-thinking-body" ref={body}>
-        {text}
-        {streaming && <Caret />}
+    <div className="pg-thinking">
+      <button
+        type="button"
+        className="pg-thinking-header"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <Sparkle
+          size={15}
+          className={
+            streaming ? "pg-thinking-spark is-live" : "pg-thinking-spark"
+          }
+        />
+        <span className="pg-thinking-label">
+          {streaming ? "思考中" : `思考过程 · ${text.length} 字`}
+        </span>
+        <ChevronDown
+          size={14}
+          className={
+            open ? "pg-thinking-chevron is-open" : "pg-thinking-chevron"
+          }
+        />
+      </button>
+      <div className={open ? "pg-thinking-trace is-open" : "pg-thinking-trace"}>
+        <div className="pg-thinking-clip">
+          <div className="pg-thinking-rows" ref={body}>
+            {rows.map((row, index) => {
+              const last = streaming && index === rows.length - 1;
+              return (
+                <div className="pg-thinking-row" key={`${index}-${row}`}>
+                  <span
+                    className={last ? "pg-trace-mark is-live" : "pg-trace-mark"}
+                  >
+                    {last ? (
+                      <span className="pg-trace-spinner" />
+                    ) : (
+                      <Check size={12} />
+                    )}
+                  </span>
+                  <span>{row}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
-    </details>
+    </div>
   );
 }
 
-// 打字机：上游一次可能吐几十上百字符，逐字直出既看不清也浪费渲染。这里按帧
-// 排队，每帧吐固定字数（每字符约 12ms），收到 Done 后直接把余量放完，避免收尾
-// 等待。
+// 上游一次可能吐几十上百字符。保持每字符约 12ms 的节奏，收到 Done 后立即放完。
 const TYPE_TICK_MS = 25;
-const TYPE_CHARS_PER_TICK = 2; // ≈12ms/字符
+const TYPE_CHARS_PER_TICK = 2;
 
 function useTypewriter(target: string, streaming: boolean) {
   const [shown, setShown] = useState(streaming ? "" : target);
-  // 上游每个 chunk 都会更新 target，把它放进 effect 依赖会让定时器每帧重建、
-  // 永远来不及触发；改用 ref 读最新值，定时器整轮只建一次。
   const latest = useRef(target);
   latest.current = target;
   useEffect(() => {
@@ -193,22 +276,68 @@ function useTypewriter(target: string, streaming: boolean) {
   return shown;
 }
 
-// 助手气泡：Markdown 渲染 + 流式期间的打字机揭示。
-function MarkdownBubble({
-  text,
-  streaming,
-}: {
-  text: string;
-  streaming: boolean;
-}) {
+function Answer({ text, streaming }: { text: string; streaming: boolean }) {
   const shown = useTypewriter(text, streaming);
+  if (streaming) {
+    const tailLength = Math.min(6, shown.length);
+    const split = shown.length - tailLength;
+    return (
+      <div className="pg-streaming-answer">
+        <span>{shown.slice(0, split)}</span>
+        <span className="stream-tail">{shown.slice(split)}</span>
+        <span className="stream-caret is-streaming" aria-hidden />
+      </div>
+    );
+  }
   return (
-    <div className="playground-bubble markdown">
+    <div className="pg-answer markdown">
       <div
         // eslint-disable-next-line react/no-danger -- HTML 已在 renderMarkdown 里净化。
         dangerouslySetInnerHTML={{ __html: renderMarkdown(shown) }}
       />
-      {streaming && <Caret />}
+    </div>
+  );
+}
+
+function ToolRun({ calls }: { calls: ToolCall[] }) {
+  const [open, setOpen] = useState(true);
+  if (calls.length === 0) return null;
+  return (
+    <div className="pg-tools">
+      <button
+        type="button"
+        className="pg-tools-header"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <ChevronDown
+          size={13}
+          className={open ? "pg-tools-chevron is-open" : "pg-tools-chevron"}
+        />
+        <Wrench size={13} />
+        <span>{calls.length} 次工具调用</span>
+      </button>
+      <div className={open ? "pg-tools-list is-open" : "pg-tools-list"}>
+        <div className="pg-tools-clip">
+          {calls.map((call, index) => (
+            <div className="pg-tool-row" key={call.id || index}>
+              <Terminal size={14} />
+              <span className="pg-tool-name">{call.name}</span>
+              <pre>{toolArguments(call.arguments)}</pre>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Waiting() {
+  return (
+    <div className="pg-waiting" role="status" aria-label="等待模型响应">
+      <span />
+      <span />
+      <span />
     </div>
   );
 }
@@ -216,11 +345,17 @@ function MarkdownBubble({
 const frameLabels: Record<FrameKind, string> = {
   text: "文本",
   reasoning: "推理",
-  tool: "工具调用",
+  tool: "工具",
   usage: "用量",
   done: "结束",
   other: "其他",
 };
+
+// 每类帧都走 JsonBlock：视图默认收起只占一行，展开/折叠交给点击，且能看清结构。
+// 语法着色（键/值/括号各自一色）对所有帧一律保留——类型信息正是调试时最要紧的一层，
+// 早期给文本/推理帧开的「单色档」把它们冲成一片同色，已废弃；帧底色仍靠 .pg-frame.*
+// 区分（文本白底、推理浅底、用量/结束彩底），语法色按底色挑一套，见 styles.css。
+const MODEL_STORAGE_KEY = "agent-router.playground.model";
 
 export function Playground({
   models,
@@ -234,61 +369,72 @@ export function Playground({
   providers: Provider[];
   keys: LocalAPIKey[];
   proxyRunning: boolean;
-  // 清空按钮在页面头部（见 App.tsx），这里只把回调与“是否有内容”上报出去。
   onRegisterReset: (reset: (() => void) | null) => void;
   onHasContentChange: (hasContent: boolean) => void;
 }) {
-  const [model, setModel] = useState<string | null>(null);
+  const [model, setModel] = useState<string | null>(() => {
+    const saved = localStorage.getItem(MODEL_STORAGE_KEY);
+    return saved && models.some((item) => item.clientModel === saved)
+      ? saved
+      : (models[0]?.clientModel ?? null);
+  });
   const [input, setInput] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [streaming, setStreaming] = useState("");
   const [thinking, setThinking] = useState("");
+  const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
   const [frames, setFrames] = useState<Frame[]>([]);
   const [result, setResult] = useState<PlaygroundResult | null>(null);
   const [error, setError] = useState("");
   const [showFrames, setShowFrames] = useState(false);
   const [level, setLevel] = useState("low");
+  const [running, setRunning] = useState(false);
   const runId = useRef("");
-  // 本轮流式文本按事件累积：完成事件到达时用它落定消息，避免依赖 setState
-  // 回调的副作用（React 严格模式下会被调用两次）。
   const streamed = useRef("");
-  // 推理文本同样按事件累积；完成事件里与正文一起落定到这条消息上。
   const thought = useRef("");
+  const tools = useRef<ToolCall[]>([]);
   const pending = useRef<Turn[]>([]);
   const threadEnd = useRef<HTMLDivElement | null>(null);
 
-  const hasKey = keys.some((k) => k.enabled && k.key);
-  // 默认选中第一个可用模型，省去每次进页面都要手动选。
+  const hasKey = keys.some((key) => key.enabled && key.key);
   useEffect(() => {
-    if (model && models.some((m) => m.clientModel === model)) return;
+    if (model && models.some((item) => item.clientModel === model)) return;
     setModel(models[0]?.clientModel ?? null);
   }, [models, model]);
 
-  // 原始帧按 runId 过滤：上一轮的迟到帧不能混进这一轮。完成事件在后端每条
-  // 退出路径上都会发出，而绑定返回值与事件到达顺序无保证，因此在这里收尾。
+  useEffect(() => {
+    if (model) localStorage.setItem(MODEL_STORAGE_KEY, model);
+  }, [model]);
+
   useEffect(() => {
     const off = EventsOn("playground:chunk", (chunk: PlaygroundChunk) => {
       if (chunk?.runId !== runId.current) return;
       if (chunk.done) {
-        if (streamed.current || thought.current) {
+        if (streamed.current || thought.current || tools.current.length > 0) {
           setTurns([
             ...pending.current,
             {
               role: "assistant",
               text: streamed.current,
               reasoning: thought.current || undefined,
+              toolCalls: tools.current.length > 0 ? tools.current : undefined,
             },
           ]);
         }
         streamed.current = "";
         thought.current = "";
+        tools.current = [];
         setStreaming("");
         setThinking("");
+        setToolCalls([]);
+        setRunning(false);
       }
-      setFrames((current) => [
-        ...current,
-        { data: chunk.data, kind: classify(chunk.data) },
-      ]);
+      if (chunk.data) {
+        setFrames((current) => [
+          ...current,
+          { data: chunk.data, kind: classify(chunk.data) },
+        ]);
+      }
       const reasoning = reasoningFrom(chunk.data);
       if (reasoning) {
         thought.current += reasoning;
@@ -299,26 +445,27 @@ export function Playground({
         streamed.current += text;
         setStreaming(streamed.current);
       }
+      const deltas = toolDeltasFrom(chunk.data);
+      if (deltas.length > 0) {
+        setToolCalls((current) => {
+          const next = mergeToolCalls(current, deltas);
+          tools.current = next;
+          return next;
+        });
+      }
     });
     return off;
   }, []);
 
   useEffect(() => {
     threadEnd.current?.scrollIntoView({ block: "end" });
-  }, [turns, streaming, thinking, frames]);
+  }, [turns, streaming, thinking, toolCalls, frames]);
 
-  // 模型按提供商分组：选项只显示映射后的上游模型名，映射前的客户端模型名放
-  // 在悬停提示里。
-  //
-  // 同名多提供商是一条链：选项的 value 必须是客户端模型名本身（网关只认这个名字，
-  // 由链策略决定先打哪家），所以它只能出现一次——重复 value 会让下拉选不中。它也
-  // 不属于任何单家提供商，因此单独列一组并标出链上有哪几家，否则用户会以为这个名字
-  // 只归链首那家（以前就会这样，点下去永远只打链首）。
   const chainMembers = new Map<string, ModelMapping[]>();
-  for (const m of models) {
-    chainMembers.set(m.clientModel, [
-      ...(chainMembers.get(m.clientModel) ?? []),
-      m,
+  for (const item of models) {
+    chainMembers.set(item.clientModel, [
+      ...(chainMembers.get(item.clientModel) ?? []),
+      item,
     ]);
   }
   const chains = [...chainMembers.entries()].filter(
@@ -326,19 +473,20 @@ export function Playground({
   );
   const chainedNames = new Set(chains.map(([name]) => name));
   const providerName = (id: string) =>
-    providers.find((p) => p.id === id)?.name ?? id;
+    providers.find((provider) => provider.id === id)?.name ?? id;
   const modelGroups = [
     ...providers.map((provider) => ({
       title: provider.name,
       options: models
         .filter(
-          (m) =>
-            m.providerId === provider.id && !chainedNames.has(m.clientModel),
+          (item) =>
+            item.providerId === provider.id &&
+            !chainedNames.has(item.clientModel),
         )
-        .map((m) => ({
-          value: m.clientModel,
-          label: m.upstreamModel,
-          tooltip: `客户端模型：${m.clientModel}`,
+        .map((item) => ({
+          value: item.clientModel,
+          label: item.upstreamModel,
+          tooltip: `客户端模型：${item.clientModel}`,
         }))
         .sort((a, b) => a.label.localeCompare(b.label, "en")),
     })),
@@ -351,7 +499,7 @@ export function Playground({
                 value: name,
                 label: name,
                 tooltip: `同名链 ${list.length} 家：${list
-                  .map((m) => providerName(m.providerId))
+                  .map((item) => providerName(item.providerId))
                   .join("、")}`,
               }))
               .sort((a, b) => a.value.localeCompare(b.value, "en")),
@@ -362,18 +510,21 @@ export function Playground({
 
   const send = async () => {
     const question = input.trim();
-    if (!question || !model || streaming) return;
+    if (!question || !model || running) return;
     const history: Turn[] = [...turns, { role: "user", text: question }];
     setTurns(history);
     pending.current = history;
     setInput("");
     streamed.current = "";
     thought.current = "";
+    tools.current = [];
     setStreaming("");
     setThinking("");
+    setToolCalls([]);
     setFrames([]);
     setResult(null);
     setError("");
+    setRunning(true);
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     runId.current = id;
     try {
@@ -381,12 +532,15 @@ export function Playground({
         await playgroundChat(
           id,
           model,
-          history.map((turn) => ({ role: turn.role, content: turn.text })),
+          history
+            .filter((turn) => turn.text)
+            .map((turn) => ({ role: turn.role, content: turn.text })),
           level,
         ),
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setRunning(false);
     }
   };
 
@@ -395,23 +549,29 @@ export function Playground({
   };
 
   const reset = useCallback(() => {
+    if (running) void cancelPlayground();
+    runId.current = "";
+    streamed.current = "";
+    thought.current = "";
+    tools.current = [];
     setTurns([]);
     setStreaming("");
     setThinking("");
+    setToolCalls([]);
     setFrames([]);
     setResult(null);
     setError("");
-  }, []);
+    setRunning(false);
+  }, [running]);
 
-  // 把清空回调交给页面头部，并在离开页面时注销。
   useEffect(() => {
     onRegisterReset(reset);
     return () => onRegisterReset(null);
   }, [onRegisterReset, reset]);
 
   useEffect(() => {
-    onHasContentChange(turns.length > 0 || !!frames.length);
-  }, [onHasContentChange, turns.length, frames.length]);
+    onHasContentChange(turns.length > 0 || frames.length > 0 || running);
+  }, [onHasContentChange, turns.length, frames.length, running]);
 
   const blocked = !proxyRunning
     ? "本地代理已停止，请先在控制台开启"
@@ -420,127 +580,129 @@ export function Playground({
       : !model
         ? "没有可路由的模型，请先启用提供商"
         : "";
+  const hasDraft = running && !thinking && !streaming && toolCalls.length === 0;
 
   return (
     <section className="playground">
-      <ScrollShadow className="playground-thread" size={24}>
-        {turns.map((turn, index) => (
-          <div className={`playground-turn ${turn.role}`} key={index}>
-            {turn.reasoning && (
-              <Thinking text={turn.reasoning} streaming={false} />
+      <div className="pg-thread">
+        <div className="pg-thread-inner">
+          {turns.map((turn, index) => (
+            <div
+              className={`pg-message ${turn.role}`}
+              key={`${turn.role}-${index}`}
+            >
+              {turn.reasoning && (
+                <ThinkingTrace text={turn.reasoning} streaming={false} />
+              )}
+              {turn.toolCalls && <ToolRun calls={turn.toolCalls} />}
+              {turn.text &&
+                (turn.role === "user" ? (
+                  <div className="pg-user-bubble">{turn.text}</div>
+                ) : (
+                  <Answer text={turn.text} streaming={false} />
+                ))}
+            </div>
+          ))}
+          {(thinking || streaming || toolCalls.length > 0 || hasDraft) && (
+            <div className="pg-message assistant">
+              {thinking && <ThinkingTrace text={thinking} streaming />}
+              {toolCalls.length > 0 && <ToolRun calls={toolCalls} />}
+              {streaming && <Answer text={streaming} streaming />}
+              {hasDraft && <Waiting />}
+            </div>
+          )}
+          <div ref={threadEnd} />
+        </div>
+      </div>
+
+      {error && <span className="pg-error">{error}</span>}
+      {blocked && !error && <span className="pg-error">{blocked}</span>}
+
+      <div className={showFrames ? "pg-debug is-open" : "pg-debug"}>
+        <button
+          type="button"
+          className="pg-debug-toggle"
+          aria-label={showFrames ? "收起原始 SSE 帧" : "展开原始 SSE 帧"}
+          aria-expanded={showFrames}
+          onClick={() => setShowFrames((value) => !value)}
+        >
+          {showFrames ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+        </button>
+        {showFrames && (
+          <div className="pg-frames">
+            {frames.length === 0 ? (
+              <div className="pg-frames-empty">尚未收到数据帧</div>
+            ) : (
+              frames.map((frame, index) => (
+                <div className={`pg-frame ${frame.kind}`} key={index}>
+                  <span className="pg-frame-index">{index + 1}</span>
+                  <span className="pg-frame-kind">
+                    {frameLabels[frame.kind]}
+                  </span>
+                  <JsonBlock className="pg-frame-body" text={frame.data} />
+                </div>
+              ))
             )}
-            <MarkdownBubble text={turn.text} streaming={false} />
-          </div>
-        ))}
-        {(thinking || streaming) && (
-          <div className="playground-turn assistant">
-            {thinking && <Thinking text={thinking} streaming />}
-            {streaming && <MarkdownBubble text={streaming} streaming />}
           </div>
         )}
-        <div ref={threadEnd} />
-      </ScrollShadow>
+      </div>
 
-      {error && <span className="playground-error">{error}</span>}
-      {blocked && !error && <span className="playground-error">{blocked}</span>}
-
-      {/* 展开时把手移到面板上方，与面板连成一块。 */}
-      <button
-        type="button"
-        className="playground-frames-toggle"
-        aria-label={showFrames ? "收起原始 SSE 帧" : "展开原始 SSE 帧"}
-        aria-expanded={showFrames}
-        onClick={() => setShowFrames((value) => !value)}
-      >
-        {showFrames ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-      </button>
-
-      {showFrames && (
-        <div className="playground-frames">
-          <div className="playground-frames-head">
-            <span>原始 SSE 帧</span>
-            <span>
-              {frames.length > 0
-                ? `本轮共 ${frames.length} 帧${
-                    result ? ` · ${result.latencyMs} ms` : ""
-                  }`
-                : "尚未收到数据帧"}
-            </span>
-          </div>
-          <ScrollShadow className="playground-frame-list" size={16}>
-            {frames.map((frame, index) => (
-              <div className={`playground-frame ${frame.kind}`} key={index}>
-                <span className="playground-frame-index">{index + 1}</span>
-                <Chip size="sm" className="playground-frame-kind">
-                  {frameLabels[frame.kind]}
-                </Chip>
-                <pre>{frame.data}</pre>
-              </div>
-            ))}
-          </ScrollShadow>
-        </div>
-      )}
-
-      <div className="playground-composer">
-        <div className="playground-composer-box">
-          <div className="playground-composer-main">
-            <TextArea
-              aria-label="输入内容"
-              className="playground-input"
-              placeholder="输入要发送给模型的内容，Enter 发送，Shift+Enter 换行"
-              rows={1}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
-              }}
+      <div className="pg-composer">
+        <textarea
+          aria-label="输入内容"
+          className="pg-composer-input"
+          placeholder="输入要发送给模型的内容，Enter 发送，Shift+Enter 换行"
+          rows={1}
+          value={input}
+          onChange={(event) => setInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing
+            ) {
+              event.preventDefault();
+              void send();
+            }
+          }}
+        />
+        <div className="pg-composer-bar">
+          <div className="pg-composer-picks">
+            <FieldSelect
+              className="pg-model-select"
+              placeholder="选择模型"
+              value={model}
+              onChange={setModel}
+              popoverClassName="request-log-select-popover pg-model-select-popover"
+              renderValue={(value) =>
+                chainedNames.has(value)
+                  ? value
+                  : (models.find((item) => item.clientModel === value)
+                      ?.upstreamModel ?? value)
+              }
+              groups={modelGroups}
             />
-            <div className="playground-composer-bar">
-              <div className="playground-composer-picks">
-                <FieldSelect
-                  className="playground-model-select"
-                  placeholder="选择模型"
-                  value={model}
-                  onChange={setModel}
-                  popoverClassName="request-log-select-popover"
-                  renderValue={(value) =>
-                    // 同名链没有单一上游模型名（各家不同），直接显示客户端名，
-                    // 否则会只显示链首那家的上游名，误导成「只打这一家」。
-                    chainedNames.has(value)
-                      ? value
-                      : (models.find((m) => m.clientModel === value)
-                          ?.upstreamModel ?? value)
-                  }
-                  groups={modelGroups}
-                />
-                <ThinkingPicker level={level} onChange={setLevel} />
-              </div>
-            </div>
+            <ThinkingPicker level={level} onChange={setLevel} />
           </div>
-          {streaming ? (
-            <Button
-              className="playground-send"
-              variant="ghost"
-              isIconOnly
+          {running ? (
+            <button
+              type="button"
+              className="pg-send is-stop"
               aria-label="停止"
-              onPress={stop}
+              onClick={() => void stop()}
             >
-              <Square size={16} />
-            </Button>
+              <Square size={14} />
+            </button>
           ) : (
-            <Button
-              className="playground-send"
-              variant="primary"
-              isIconOnly
+            <button
+              type="button"
+              className="pg-send"
               aria-label="发送"
-              isDisabled={!input.trim() || !!blocked}
-              onPress={send}
+              disabled={!input.trim() || !!blocked}
+              onClick={() => void send()}
             >
-              <Send size={16} />
-            </Button>
+              <Send size={15} />
+            </button>
           )}
         </div>
       </div>

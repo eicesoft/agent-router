@@ -99,10 +99,14 @@
   --brand-anthropic-bg: #f6eee7;
   --brand-gemini-bg: #eeedff;
   --brand-gemini-ink: #5d55ce;
-  /* 演练场原始帧：文本与推理帧的中性灰底，比其它类型的彩底更收敛。 */
-  --frame-text-bg: #787d85;
-  --frame-reasoning-bg: #eef0f3;
-  --frame-text-ink: #dfe2e6;
+  /* 演练场原始帧：推理白底灰字，文本白底纯黑字（暗色见 html.dark 的
+     --frame-content-*），工具/其他淡灰底灰字；用量与结束保留各自的彩底。 */
+  --frame-text-bg: #eef0f3;
+  --frame-text-ink: #6b6d75;
+  --frame-reasoning-bg: #fff;
+  --frame-reasoning-ink: #63656e;
+  --frame-content-bg: #fff;
+  --frame-content-ink: #000;
   --json-bg: #15171b;
   --json-ink: #e8eaed;
   /* JSON 语法着色：两套色板各针对一种固定背景。on-dark 供请求日志正文井这类
@@ -2135,6 +2139,39 @@ code {
      两端收成半圆。选中块是新加的实心底，形状必须自己收一档。 */
   border-radius: 8px;
 }
+/* 演练场模型下拉：高度恒定约半屏，不随条目多少伸缩；列表在内部滚动。
+   写在 request-log 同名规则之后，覆盖那边的 max-height: 216px。 */
+.pg-model-select-popover {
+  height: 50vh;
+  max-height: 50vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.pg-model-select-popover .list-box {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* 演练场模型下拉按提供商分组。全局 header 规则（页面标题栏，见文件前部）会
+   误中 ListBox.Section 的 <header>：28px 左缩进让它比模型文字靠右 21px，
+   下 8px 的 margin 又把它推离自己组的模型、反而贴住上一组。这里复位并把间距
+   反过来——组与组之间留白，分组名紧贴自己组的模型；左右 12px 让分组名与
+   模型行从同一条左边线起排（比原先模型的 10px 略靠右）。 */
+.pg-model-select-popover .list-box-section + .list-box-section {
+  margin-top: 10px;
+}
+.pg-model-select-popover .list-box-section header {
+  display: block;
+  margin: 0;
+  padding: 2px 12px;
+  /* 分组名即提供商名，用中性灰与模型正文拉开层级。 */
+  color: var(--muted);
+  font-size: 11px;
+}
+.pg-model-select-popover .list-box-item {
+  padding: 3px 12px;
+}
 .model-option {
   display: flex;
   align-items: baseline;
@@ -3146,9 +3183,14 @@ html.dark {
      still reads as a sunken well against the dark dialog. */
   --json-bg: #101115;
   --json-ink: #e8eaed;
-  --frame-text-bg: #3f434b;
-  --frame-reasoning-bg: #4a4f58;
-  --frame-text-ink: #e2e4e8;
+  --frame-text-bg: #35363c;
+  --frame-text-ink: #d9dade;
+  --frame-reasoning-bg: #26272d;
+  --frame-reasoning-ink: #a6a8b1;
+  /* 文本帧翻成深底浅字：正文增量不再在暗色面板上顶一块亮纸。比推理帧
+     （#26272d）更深一档，靠明度与内描边区分，避免和过程帧糊在一起。 */
+  --frame-content-bg: #16171c;
+  --frame-content-ink: #f0f0f3;
   --json-border: #34353c;
   --more-fade: linear-gradient(90deg, rgba(56, 58, 66, 0), #383a42 35%);
 }
@@ -3269,12 +3311,11 @@ html.dark .tool-template-write {
   border-radius: 12px 12px 12px 4px;
   max-width: 76%;
   background: var(--well-bg-2);
-  border: 1px solid var(--well-border);
+  border: 0;
   color: var(--ink-body);
 }
 .playground-turn.assistant .playground-bubble {
   background: transparent;
-  border-color: transparent;
   padding: 2px 0;
 }
 /* Markdown 正文：去掉 pre-wrap（块级元素自己换行），并给标题/列表/引用/代码
@@ -3352,12 +3393,10 @@ html.dark .tool-template-write {
 .playground-bubble.markdown hr {
   margin: 10px 0;
   border: none;
-  border-top: 1px solid var(--well-border);
 }
 .playground-turn.user .playground-bubble {
   /* 用户气泡用淡草绿，与发送按钮同一套颜色。 */
   background: var(--chat-bubble-bg);
-  border-color: transparent;
   border-radius: 12px 12px 4px 12px;
   color: var(--chat-bubble-ink);
 }
@@ -3683,6 +3722,966 @@ html.dark .provider-switch-thumb {
 }
 html.dark .provider-switch[data-selected="true"] .provider-switch-thumb {
   background: #fff !important;
+}
+
+/* ===== Beautiful UI 演练场 =====
+   BeautifulUI 的原语按 MIT 复制进本项目，色泽与圆角复用 agent-router
+   自己的主题 token，保留其“冷灰表面 + 细线 + 克制强调色”的视觉语言。 */
+.playground {
+  --pg-line: color-mix(in srgb, var(--card-border) 92%, var(--ink) 8%);
+  --pg-line-strong: color-mix(in srgb, var(--card-border) 82%, var(--ink) 18%);
+  --pg-surface: var(--card-bg);
+  --pg-field: color-mix(in srgb, var(--well-bg) 78%, transparent);
+  --pg-hover: var(--hover-fill);
+  --pg-ink-2: var(--muted-2);
+  --pg-ink-3: var(--muted-4);
+  --pg-block: color-mix(in srgb, var(--well-bg-2) 88%, transparent);
+  --pg-shadow: 0 0 0 1px var(--pg-line), 0 1px 2px rgba(20, 21, 25, 0.05);
+  /* 输入区相对卡片底部再垫高 50px（page-scroll 自带的 18px 之外）。 */
+  padding-bottom: 50px;
+}
+
+.playground,
+.playground button,
+.playground textarea {
+  font-family: inherit;
+}
+
+.pg-thread {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.pg-thread-inner {
+  width: 100%;
+  max-width: 760px;
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 12px 4px 28px;
+  display: flex;
+  flex-direction: column;
+  /* 新消息从顶部向下排：flex-end 会把短会话压到视口底部/中段才开始。 */
+  justify-content: flex-start;
+  gap: 22px;
+}
+
+.pg-message {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+  animation: pg-fade-up 320ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.pg-message.user {
+  align-items: flex-end;
+}
+
+.pg-user-bubble {
+  max-width: min(78%, 600px);
+  padding: 8px 12px;
+  border-radius: 12px 12px 4px 12px;
+  background: var(--chat-bubble-bg);
+  color: var(--chat-bubble-ink);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  box-shadow: 0 1px 2px rgba(20, 21, 25, 0.04);
+}
+
+.pg-message.assistant {
+  max-width: 680px;
+}
+
+.pg-thinking {
+  width: 100%;
+  max-width: 620px;
+}
+
+.pg-thinking-header,
+.pg-tools-header {
+  width: fit-content;
+  max-width: 100%;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: -6px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-2);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out;
+}
+
+.pg-thinking-header:hover,
+.pg-tools-header:hover {
+  background: var(--pg-hover);
+  color: var(--ink);
+}
+
+.pg-thinking-spark {
+  flex: 0 0 auto;
+  color: var(--muted-3);
+}
+
+.pg-thinking-spark.is-live {
+  color: var(--accent-mark);
+  animation: pg-spark 1.4s ease-in-out infinite;
+}
+
+.pg-thinking-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pg-thinking-chevron,
+.pg-tools-chevron {
+  flex: 0 0 auto;
+  color: var(--muted-4);
+  transition: transform 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.pg-thinking-chevron.is-open,
+.pg-tools-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.pg-thinking-trace,
+.pg-tools-list {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 280ms cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 180ms ease-out;
+}
+
+.pg-thinking-trace.is-open,
+.pg-tools-list.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.pg-thinking-clip,
+.pg-tools-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pg-thinking-rows {
+  position: relative;
+  max-height: 34vh;
+  margin: 4px 0 2px 7px;
+  padding: 4px 2px;
+  overflow-y: auto;
+  color: var(--muted-2);
+  font-size: 12px;
+  line-height: 1.62;
+}
+
+.pg-thinking-rows::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 8px;
+  width: 1px;
+  background: var(--pg-line);
+}
+
+.pg-thinking-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 2px 0 2px 22px;
+  animation: pg-fade-up 240ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.pg-trace-mark {
+  position: absolute;
+  left: 0;
+  width: 14px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--muted-4);
+  background: var(--well-bg-2);
+}
+
+.pg-thinking-row {
+  position: relative;
+}
+
+.pg-trace-spinner {
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid var(--pg-line-strong);
+  border-top-color: var(--accent-mark);
+  border-radius: 50%;
+  animation: pg-spin 700ms linear infinite;
+}
+
+.pg-streaming-answer,
+.pg-answer {
+  width: 100%;
+  color: var(--ink-body);
+  font-size: 13px;
+  line-height: 1.68;
+  overflow-wrap: anywhere;
+}
+
+.pg-streaming-answer {
+  white-space: pre-wrap;
+}
+
+.stream-tail {
+  filter: blur(1.4px);
+  -webkit-mask-image: linear-gradient(
+    to right,
+    oklch(0 0 0) 20%,
+    oklch(0 0 0 / 0.25)
+  );
+  mask-image: linear-gradient(to right, oklch(0 0 0) 20%, oklch(0 0 0 / 0.25));
+}
+
+.stream-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 2px;
+  border-radius: 1px;
+  background: var(--accent-mark);
+  vertical-align: text-bottom;
+  animation: pg-caret 1s step-end infinite;
+}
+
+.stream-caret.is-streaming {
+  animation: none;
+}
+
+.pg-answer.markdown {
+  white-space: normal;
+}
+
+.pg-answer.markdown > div > :first-child {
+  margin-top: 0;
+}
+
+.pg-answer.markdown > div > :last-child {
+  margin-bottom: 0;
+}
+
+.pg-answer.markdown p {
+  margin: 0 0 9px;
+}
+
+.pg-answer.markdown h1,
+.pg-answer.markdown h2,
+.pg-answer.markdown h3,
+.pg-answer.markdown h4 {
+  margin: 14px 0 7px;
+  color: var(--ink-heading);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.pg-answer.markdown h1 {
+  font-size: 15px;
+}
+
+.pg-answer.markdown ul,
+.pg-answer.markdown ol {
+  margin: 0 0 9px;
+  padding-left: 19px;
+}
+
+.pg-answer.markdown li {
+  margin: 3px 0;
+}
+
+.pg-answer.markdown blockquote {
+  margin: 0 0 9px;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--pg-line-strong);
+  color: var(--muted-2);
+}
+
+.pg-answer.markdown a {
+  color: var(--accent-mark);
+}
+
+.pg-answer.markdown code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--well-bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.pg-answer.markdown pre {
+  margin: 0 0 9px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--pg-line);
+  border-radius: 8px;
+  background: var(--well-bg-2);
+}
+
+.pg-answer.markdown pre code {
+  padding: 0;
+  background: none;
+}
+
+.pg-answer.markdown table {
+  margin: 0 0 9px;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.pg-answer.markdown th,
+.pg-answer.markdown td {
+  padding: 5px 8px;
+  border: 1px solid var(--pg-line);
+}
+
+.pg-answer.markdown hr {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--pg-line);
+}
+
+.pg-tools {
+  width: 100%;
+  max-width: 620px;
+  margin-top: 1px;
+}
+
+.pg-tools-header {
+  color: var(--muted-2);
+}
+
+.pg-tools-list.is-open .pg-tools-clip {
+  margin-top: 3px;
+}
+
+.pg-tool-row {
+  display: grid;
+  grid-template-columns: 16px auto minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  padding: 8px 9px;
+  border-bottom: 1px solid var(--pg-line);
+  color: var(--muted-2);
+}
+
+.pg-tool-row:first-child {
+  border-radius: 8px 8px 0 0;
+}
+
+.pg-tool-row:last-child {
+  border-bottom: 0;
+  border-radius: 0 0 8px 8px;
+}
+
+.pg-tool-row:only-child {
+  border-radius: 8px;
+}
+
+.pg-tool-list,
+.pg-tools-clip {
+  background: var(--pg-block);
+  box-shadow: var(--pg-shadow);
+  border-radius: 8px;
+}
+
+.pg-tool-row > svg {
+  margin-top: 2px;
+  color: var(--muted-3);
+}
+
+.pg-tool-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-body);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pg-tool-row pre {
+  min-width: 0;
+  max-height: 160px;
+  margin: 0;
+  overflow: auto;
+  color: var(--muted-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pg-waiting {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 1px;
+}
+
+.pg-waiting span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted-4);
+  animation: pg-wait 1.1s ease-in-out infinite;
+}
+
+.pg-waiting span:nth-child(2) {
+  animation-delay: 140ms;
+}
+
+.pg-waiting span:nth-child(3) {
+  animation-delay: 280ms;
+}
+
+.pg-error {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--error-ink) 20%, transparent);
+  border-radius: 8px;
+  background: var(--danger-removed-bg);
+  color: var(--danger-removed-ink);
+  font-size: 11.5px;
+  line-height: 1.45;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.pg-debug {
+  flex: 0 0 auto;
+  width: calc(100% - 8px);
+  max-width: 752px;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  margin-top: 0;
+  /* 只抵消 .playground 的 10px gap：按钮底边贴在输入卡上沿，不探进内部。 */
+  margin-bottom: -10px;
+  position: relative;
+  z-index: 1;
+  /* 收起态只有按钮，不自带卡片底/描边/投影。 */
+  background: transparent;
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+  clip-path: none;
+}
+
+/* 展开态：箭头整段在卡外，底边贴齐「帧区+输入区」顶沿；整段与输入区融成一张卡。 */
+.pg-debug.is-open {
+  position: relative;
+  z-index: 1;
+  margin-top: 14px;
+  /* 抵消 playground 的 10px gap，再叠 1px 盖住与输入区的接缝线。 */
+  margin-bottom: -11px;
+  padding: 0 10px;
+  background: var(--pg-surface);
+  border: 1px solid var(--card-border);
+  border-bottom: 0;
+  border-radius: 18px 18px 0 0;
+  /* 与输入区同一套轻影，只朝上/侧向，底边交给 clip 裁掉。 */
+  box-shadow:
+    0 -1px 2px rgba(20, 21, 25, 0.03),
+    0 -8px 24px rgba(20, 21, 25, 0.04);
+  clip-path: inset(-24px -24px 0 -24px);
+}
+
+.pg-debug.is-open .pg-debug-toggle {
+  position: absolute;
+  left: 50%;
+  /* 底边落在卡顶外沿（+1px 顶边框），与展开区顶部对齐。 */
+  bottom: calc(100% + 1px);
+  transform: translateX(-50%);
+  order: unset;
+  margin: 0;
+}
+
+/* 收起态：输入卡四角圆角完整；展开态去掉上边，与数据流/箭头区接平、无中线。 */
+.pg-debug:not(.is-open) + .pg-composer {
+  border-top: 1px solid var(--card-border);
+  border-radius: 18px;
+}
+
+.pg-debug.is-open + .pg-composer {
+  position: relative;
+  z-index: 0;
+  border-top: 0;
+  border-radius: 0 0 18px 18px;
+  /* 切掉朝上的投影：上下两层之间不再出现分隔线。 */
+  clip-path: inset(0 -20px -20px -20px);
+}
+
+/* SSE 切换钮：只留大号上下箭头；上圆下方（底边开口并进输入卡）。 */
+.pg-debug-toggle {
+  min-width: 34px;
+  /* 收起态也减半（原 28px），与展开态同高。 */
+  min-height: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0 6px;
+  border: 1px solid var(--pg-line);
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  /* 与输入卡同色，贴在上沿时两块区域融成一体。 */
+  background: var(--pg-surface);
+  color: var(--muted-3);
+  font-size: 10.5px;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(20, 21, 25, 0.035);
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out,
+    border-color 120ms ease-out;
+}
+
+.pg-debug-toggle:hover {
+  border-color: var(--pg-line-strong);
+  background: var(--pg-hover);
+  color: var(--ink-body);
+}
+
+.pg-debug-toggle svg {
+  display: block;
+  width: 11px;
+  height: 11px;
+}
+
+.pg-frames {
+  width: 100%;
+  max-height: 28vh;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px;
+  overflow-y: auto;
+  border: 1px solid var(--pg-line);
+  border-radius: 10px;
+  background: var(--pg-surface);
+  box-shadow: var(--pg-shadow);
+}
+
+/* 展开并入输入卡：帧区（含空状态）自身不描边、不投影，避免与输入区之间露底线。 */
+.pg-debug.is-open .pg-frames {
+  order: 2;
+  width: 100%;
+  padding: 8px 0 0;
+  border: 0;
+  border-bottom: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.pg-frames-empty {
+  padding: 6px;
+  color: var(--muted-4);
+  font-size: 11px;
+  text-align: center;
+  border: 0;
+  box-shadow: none;
+}
+
+.pg-frame {
+  display: grid;
+  grid-template-columns: 24px 50px minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: var(--frame-text-bg);
+}
+
+.pg-frame-index {
+  padding-top: 1px;
+  color: var(--frame-text-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  text-align: right;
+}
+
+.pg-frame-kind {
+  padding-top: 1px;
+  color: var(--frame-text-ink);
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+  opacity: 0.72;
+}
+
+.pg-frame pre,
+.pg-frame-body,
+.pg-frame-body .json-tree,
+.pg-frame-body.json-block-plain pre {
+  min-width: 0;
+  margin: 0;
+  color: var(--frame-text-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 所有帧都用 JSON 树渲染（见 Playground.tsx 的帧列表），缩进比弹窗里的小一号，
+   才塞得进 50px 标签列之后的窄栅格。 */
+.pg-frame-body .json-tree-children {
+  padding-left: 12px;
+}
+
+/* 文本帧是正文增量，底色/字色走 --frame-content-*（随主题翻转），靠一圈内描边
+   在面板上保持边界。语法色不再钉死浅色盘，直接跟 .json-block 的主题翻转。 */
+.pg-frame.text {
+  background: var(--frame-content-bg);
+  box-shadow: inset 0 0 0 1px var(--pg-line);
+}
+
+.pg-frame.text pre,
+.pg-frame.text .pg-frame-body,
+.pg-frame.text .pg-frame-body .json-tree,
+.pg-frame.text .pg-frame-kind,
+.pg-frame.text .pg-frame-index {
+  color: var(--frame-content-ink);
+}
+
+/* 基础规则给类型标签留了透明度做层次，正文帧这里要压掉它，否则标签是灰的。 */
+.pg-frame.text .pg-frame-kind {
+  opacity: 1;
+}
+
+/* 推理帧字是灰的：过程性内容不跟正文抢注意力。 */
+.pg-frame.reasoning {
+  background: var(--frame-reasoning-bg);
+  box-shadow: inset 0 0 0 1px var(--pg-line);
+}
+
+.pg-frame.reasoning pre,
+.pg-frame.reasoning .pg-frame-body,
+.pg-frame.reasoning .pg-frame-body .json-tree,
+.pg-frame.reasoning .pg-frame-kind,
+.pg-frame.reasoning .pg-frame-index {
+  color: var(--frame-reasoning-ink);
+}
+
+/* 用量与结束保留原来的彩底彩字，不被上面的中性灰波及。 */
+.pg-frame.usage {
+  background: var(--brand-anthropic-bg);
+  box-shadow: none;
+}
+
+.pg-frame.usage pre,
+.pg-frame.usage .pg-frame-kind,
+.pg-frame.usage .pg-frame-index {
+  color: var(--warn-ink);
+}
+
+.pg-frame.done {
+  background: var(--success-soft);
+  box-shadow: none;
+}
+
+.pg-frame.done pre,
+.pg-frame.done .pg-frame-kind,
+.pg-frame.done .pg-frame-index {
+  color: var(--success-ink);
+}
+
+.pg-composer {
+  flex: 0 0 auto;
+  width: calc(100% - 8px);
+  max-width: 752px;
+  margin-inline: auto;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+  background: var(--pg-surface);
+  /* 参考图：轻薄卡片影，主影在下、四周一圈很淡的环境光，不要厚重描边环。 */
+  box-shadow:
+    0 1px 2px rgba(20, 21, 25, 0.04),
+    0 8px 24px rgba(20, 21, 25, 0.06),
+    0 16px 40px rgba(20, 21, 25, 0.04);
+  transition:
+    border-color 150ms ease-out,
+    box-shadow 150ms ease-out;
+}
+
+/* 展开帧面板时（含空状态），阴影整体往下压，接缝朝上不画影。 */
+.pg-debug.is-open + .pg-composer {
+  border-top: 0;
+  box-shadow:
+    0 1px 2px rgba(20, 21, 25, 0.04),
+    0 8px 24px rgba(20, 21, 25, 0.06),
+    0 16px 40px rgba(20, 21, 25, 0.04);
+}
+
+.pg-debug.is-open:has(+ .pg-composer:focus-within) {
+  box-shadow: 0 -6px 18px rgba(20, 21, 25, 0.04);
+}
+
+.pg-composer:focus-within {
+  border-color: var(--card-border);
+  box-shadow:
+    0 1px 2px rgba(20, 21, 25, 0.04),
+    0 10px 28px rgba(20, 21, 25, 0.08),
+    0 20px 48px rgba(20, 21, 25, 0.05);
+}
+
+.pg-composer-input {
+  width: 100%;
+  min-height: 52px;
+  max-height: 30vh;
+  padding: 8px 7px;
+  overflow-y: auto;
+  resize: none;
+  field-sizing: content;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink-body);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.pg-composer-input::placeholder {
+  color: var(--muted-4);
+}
+
+.pg-composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pg-composer-picks {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.pg-composer-picks > .pg-model-select,
+.pg-composer-picks > .field-select-tooltip-anchor {
+  flex: 0 1 160px;
+  width: 160px;
+}
+
+.pg-composer-picks .pg-model-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.pg-thinking-trigger {
+  flex: 0 0 auto;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  /* 融进输入区：同底、无描边无投影，只靠字色区分。 */
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted-2);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.pg-thinking-trigger:hover {
+  background: var(--hover-fill);
+  color: var(--ink-body);
+}
+
+.pg-thinking-popover {
+  padding: 12px 14px;
+}
+
+.pg-thinking-popover .slider {
+  width: 200px;
+  gap: 4px;
+}
+
+.pg-thinking-popover .slider__output,
+.pg-thinking-popover [data-slot="label"] {
+  font-size: 12px;
+}
+
+.pg-composer-bar .select__trigger {
+  min-width: 0;
+  min-height: 30px;
+  /* HeroUI 触发器是 inline-flex 且默认 stretch；padding 收到 4px 后文字会贴顶，需显式居中。 */
+  align-items: center;
+  padding: 4px 28px 4px 8px;
+  border: 0 !important;
+  border-radius: 8px;
+  /* 与思考档位一样融进输入区：透明底、去投影。 */
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--muted-2) !important;
+}
+
+.pg-composer-bar .select__trigger:hover {
+  background: var(--hover-fill) !important;
+  color: var(--ink-body) !important;
+}
+
+.pg-composer-bar .select__value,
+.pg-composer-bar .autocomplete__value {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pg-send {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: var(--chat-accent);
+  color: #fff;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease-out,
+    color 140ms ease-out,
+    transform 140ms ease-out,
+    opacity 140ms ease-out;
+}
+
+.pg-send:hover:not(:disabled) {
+  background: var(--chat-accent-hover);
+}
+
+.pg-send:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.pg-send:disabled {
+  background: var(--well-bg);
+  color: var(--muted-4);
+  cursor: default;
+  opacity: 0.75;
+}
+
+.pg-send.is-stop {
+  background: var(--selected-bg);
+  color: var(--selected-ink);
+}
+
+.pg-send.is-stop:hover:not(:disabled) {
+  background: var(--selected-bg-hover);
+}
+
+@keyframes pg-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pg-spark {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.86);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pg-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pg-caret {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes pg-wait {
+  0%,
+  100% {
+    opacity: 0.28;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pg-message,
+  .pg-thinking-row,
+  .pg-thinking-spark,
+  .pg-trace-spinner,
+  .pg-waiting span,
+  .stream-caret,
+  .stream-tail {
+    animation: none !important;
+    filter: none;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
 }
 
 /* ===== Skills 管理页 ===== */
