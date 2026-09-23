@@ -2075,34 +2075,15 @@ code {
   border: 1px solid var(--divider);
   border-radius: 8px;
 }
+/* 标题 + ? 在上、轮换模式下拉在下：与抽屉其余字段同为上下结构，模式说明
+   收进标题后的 ? tips，不再占一行正文。 */
 .provider-credentials-header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-}
-.provider-credentials-header > div {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
 }
 .provider-credentials-header b {
   font-size: 12px;
-}
-.provider-credentials-header p {
-  margin: 0;
-  color: var(--muted-4);
-  font-size: 11px;
-  line-height: 1.45;
-}
-/* Wide enough for the longest mode label ("会话粘性") plus the chevron, so the
-   field reads as a real control instead of a 76px stub sized by "轮询". It does
-   not shrink: the hint beside it wraps instead, which keeps the control stable
-   at every window width. The trigger fills it via FieldSelect's fullWidth. */
-.provider-credentials-header .provider-credential-mode {
-  flex: 0 0 124px;
 }
 .provider-credential-list {
   display: flex;
@@ -2165,16 +2146,19 @@ code {
   align-items: center;
   gap: 2px;
 }
+/* 添加 Key 表单上下堆叠：名称一行，API Key + 加号一行，与抽屉字段对齐。 */
 .provider-credential-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.provider-credential-secret-row {
   display: flex;
   align-items: flex-end;
   gap: 6px;
 }
-.provider-credential-name {
-  flex: 0 1 34%;
-}
 .provider-credential-secret {
-  flex: 1 1 auto;
+  flex: 1;
   min-width: 0;
 }
 .provider-model-scroll {

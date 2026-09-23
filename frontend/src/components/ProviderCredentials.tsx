@@ -115,11 +115,15 @@ export function ProviderCredentials({ providerId }: { providerId: string }) {
       className="provider-credentials"
       aria-labelledby="provider-credentials-heading"
     >
-      <header className="provider-credentials-header">
-        <div>
-          <b id="provider-credentials-heading">API Key 池</b>
-          <p>{modeHint(mode)}</p>
-        </div>
+      {/* 不用 <header>：全局页头规则（align-items:center / padding）会误中它。 */}
+      <div className="provider-credentials-header">
+        <b id="provider-credentials-heading">
+          API Key 池
+          <Tooltip>
+            <Tooltip.Trigger className="field-label-help">?</Tooltip.Trigger>
+            <Tooltip.Content>{modeHint(mode)}</Tooltip.Content>
+          </Tooltip>
+        </b>
         <FieldSelect
           label=""
           value={mode}
@@ -128,10 +132,9 @@ export function ProviderCredentials({ providerId }: { providerId: string }) {
             value: item.value,
             label: item.label,
           }))}
-          className="provider-credential-mode"
           fullWidth
         />
-      </header>
+      </div>
 
       {items.length > 0 && (
         <ul className="provider-credential-list">
@@ -154,34 +157,31 @@ export function ProviderCredentials({ providerId }: { providerId: string }) {
       )}
 
       <div className="provider-credential-add">
-        <TextField
-          value={name}
-          onChange={setName}
-          aria-label="Key 名称"
-          className="provider-credential-name"
-        >
+        <TextField value={name} onChange={setName} aria-label="Key 名称">
           <Label>名称（可选）</Label>
           <Input placeholder="例如：主账号" />
         </TextField>
-        <TextField
-          value={apiKey}
-          onChange={setApiKey}
-          aria-label="API Key"
-          className="provider-credential-secret"
-        >
-          <Label>API Key</Label>
-          <Input type="password" placeholder="sk-..." />
-        </TextField>
-        <Button
-          isIconOnly
-          size="sm"
-          variant="outline"
-          onPress={add}
-          isDisabled={busy || !apiKey.trim()}
-          aria-label="添加 API Key"
-        >
-          <Plus size={15} />
-        </Button>
+        <div className="provider-credential-secret-row">
+          <TextField
+            value={apiKey}
+            onChange={setApiKey}
+            aria-label="API Key"
+            className="provider-credential-secret"
+          >
+            <Label>API Key</Label>
+            <Input type="password" placeholder="sk-..." />
+          </TextField>
+          <Button
+            isIconOnly
+            size="sm"
+            variant="outline"
+            onPress={add}
+            isDisabled={busy || !apiKey.trim()}
+            aria-label="添加 API Key"
+          >
+            <Plus size={15} />
+          </Button>
+        </div>
       </div>
       {error && <p className="provider-model-error">{error}</p>}
     </section>
