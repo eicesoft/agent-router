@@ -79,7 +79,7 @@ func TestE2EMaskEndToEnd(t *testing.T) {
 	}
 
 	// The per-credential usage breakdown must carry the mask too.
-	stats := usage.NewSQLiteTracker(db).UsageByCredential()
+	stats := usage.NewSQLiteTracker(db).UsageByCredential(nil)
 	if len(stats) != 1 || stats[0].Mask != "sk****999" {
 		t.Fatalf("breakdown = %+v", stats)
 	}

@@ -144,12 +144,22 @@ export type UsageStat = {
   // Display form of an upstream key (ss****sfg); set only for the per-credential
   // breakdown.
   mask?: string;
+  // Owning provider of a credential row: providerId is the raw id, provider is
+  // the registry display name filled by GetUsageBreakdown.
+  providerId?: string;
+  provider?: string;
   requests: number;
   successes: number;
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
   reasoningOutputTokens: number;
+  // USD costs from mapping unit prices (per 1M tokens). inputCost excludes
+  // cached tokens; cacheCost bills them at cacheReadPrice; total = the three.
+  inputCost: number;
+  outputCost: number;
+  cacheCost: number;
+  totalCost: number;
 };
 export type UsageBreakdown = {
   providers: UsageStat[];

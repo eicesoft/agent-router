@@ -582,19 +582,29 @@ func (a *App) GetRequestLog(id int64) (usage.RequestLog, error) {
 // GetUsageBreakdown reports aggregate token and request counts grouped by
 // provider and by model for the usage dashboard. Provider rows are grouped by
 // provider_id, whose raw value is an opaque ID, so the registry fills in the
-// display name the same way UsageByKey carries token_name.
+// display name the same way UsageByKey carries token_name. Credential rows
+// carry ProviderID, so the same registry lookup fills Provider for the
+// upstream-key panel. Costs are priced from the model mappings at read time
+// (USD / 1M tokens).
 func (a *App) GetUsageBreakdown() usage.Breakdown {
-	providers := a.usage.UsageByProvider()
+	price := a.mappings.PriceFor
+	providers := a.usage.UsageByProvider(price)
 	for i, stat := range providers {
 		if p, ok := a.providers.Get(stat.Key); ok {
 			providers[i].Name = p.Name
 		}
 	}
+	credentials := a.usage.UsageByCredential(price)
+	for i, stat := range credentials {
+		if p, ok := a.providers.Get(stat.ProviderID); ok {
+			credentials[i].Provider = p.Name
+		}
+	}
 	return usage.Breakdown{
 		Providers:   providers,
-		Models:      a.usage.UsageByModel(),
-		Keys:        a.usage.UsageByKey(),
-		Credentials: a.usage.UsageByCredential(),
+		Models:      a.usage.UsageByModel(price),
+		Keys:        a.usage.UsageByKey(price),
+		Credentials: credentials,
 	}
 }
 

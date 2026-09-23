@@ -218,14 +218,18 @@ ALTER TABLE model_mappings_rebuilt RENAME TO model_mappings;`); err != nil {
 	}
 	// 使用统计的覆盖索引必须建在补列之后：老库重建前根本没有 credential_id，
 	// 内联 DDL 里的 CREATE INDEX IF NOT EXISTS 会在建表后立刻执行而失败。
-	// 上游 Key 用量跑在 request_logs 这张带大体积 body 的表上，WHERE 里的
-	// credential_id <> '' OR credential_name <> '' 只有被规划成索引扫描才不会
-	// 顺序读完所有 body 溢出页（否则每次打开使用情况页要抖几百毫秒）。
-	// 见 backend/usage/sqlite.go 的 usageByCredentialQuery / usageByDimensionQuery。
+	// 聚合按「维度 × 路由(provider, model)」出粒度再算费（见 backend/usage/cost.go），
+	// 索引必须带上 provider_id/client_model，否则 SQLite 会裸扫 request_logs
+	// 的 body 溢出页（每次打开使用情况页抖几百毫秒）。
+	// 旧索引列不够宽：CREATE INDEX IF NOT EXISTS 对已存在的窄索引无效，先 DROP。
 	if _, err := db.Exec(`
-CREATE INDEX IF NOT EXISTS idx_request_logs_credential ON request_logs(credential_id, credential_name, credential_mask, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens);
-CREATE INDEX IF NOT EXISTS idx_usage_events_provider ON usage_events(provider_id, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens);
-CREATE INDEX IF NOT EXISTS idx_usage_events_model ON usage_events(model, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens);`); err != nil {
+DROP INDEX IF EXISTS idx_request_logs_credential;
+DROP INDEX IF EXISTS idx_request_logs_token;
+DROP INDEX IF EXISTS idx_usage_events_provider;
+DROP INDEX IF EXISTS idx_usage_events_model;
+CREATE INDEX IF NOT EXISTS idx_request_logs_credential ON request_logs(credential_id, credential_name, credential_mask, provider_id, client_model, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens);
+CREATE INDEX IF NOT EXISTS idx_request_logs_token ON request_logs(token_id, token_name, provider_id, client_model, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens);
+CREATE INDEX IF NOT EXISTS idx_usage_events_route ON usage_events(provider_id, model, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens);`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate usage indexes: %w", err)
 	}

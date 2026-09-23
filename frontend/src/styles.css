@@ -3005,6 +3005,27 @@ html.dark .json-block {
   display: block;
   margin-top: 4px;
 }
+.usage-cost-line {
+  color: var(--ink-heading);
+  font-weight: 600;
+}
+.usage-stat-figures {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+}
+.usage-stat-cost {
+  color: var(--ink-heading);
+  font-size: 12px;
+  font-weight: 650;
+}
+.usage-stat-cost-detail {
+  text-align: right;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .usage-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -5367,6 +5388,12 @@ html.dark .skills-add {
   max-width: 40%;
   flex: 1;
   text-align: right;
+}
+/* 上游 Key 用量里，key 前的提供商名只是定位前缀，弱化以免抢掩码的视觉焦点。 */
+.usage-stat-provider {
+  color: var(--muted-2);
+  font-weight: 500;
+  margin-right: 4px;
 }
 .provider-credential-title code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;

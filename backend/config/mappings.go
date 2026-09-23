@@ -251,6 +251,27 @@ func (s *MappingStore) SetChainMode(clientModel, mode string) error {
 	return nil
 }
 
+// PriceFor returns a route's unit prices (USD / 1M tokens) for billing display.
+// providerID + any client-side name (own or alias) must match; unknown routes
+// price at zero. Disabled mappings still price: historical usage was already
+// paid at that rate.
+func (s *MappingStore) PriceFor(providerID, clientModel string) (input, output, cacheRead float64) {
+	name := strings.TrimSpace(clientModel)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, item := range s.items {
+		if item.ProviderID != providerID {
+			continue
+		}
+		for _, candidate := range item.Names() {
+			if candidate == name {
+				return item.InputPrice, item.OutputPrice, item.CacheReadPrice
+			}
+		}
+	}
+	return 0, 0, 0
+}
+
 // Resolve finds the mapping a client model name routes to. An alias is
 // interchangeable with the client model name it was declared beside, so both
 // go through the same lookup.

@@ -765,12 +765,18 @@ export namespace usage {
 	    key: string;
 	    name?: string;
 	    mask?: string;
+	    providerId?: string;
+	    provider?: string;
 	    requests: number;
 	    successes: number;
 	    inputTokens: number;
 	    outputTokens: number;
 	    cachedInputTokens: number;
 	    reasoningOutputTokens: number;
+	    inputCost: number;
+	    outputCost: number;
+	    cacheCost: number;
+	    totalCost: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new UsageStat(source);
@@ -781,12 +787,18 @@ export namespace usage {
 	        this.key = source["key"];
 	        this.name = source["name"];
 	        this.mask = source["mask"];
+	        this.providerId = source["providerId"];
+	        this.provider = source["provider"];
 	        this.requests = source["requests"];
 	        this.successes = source["successes"];
 	        this.inputTokens = source["inputTokens"];
 	        this.outputTokens = source["outputTokens"];
 	        this.cachedInputTokens = source["cachedInputTokens"];
 	        this.reasoningOutputTokens = source["reasoningOutputTokens"];
+	        this.inputCost = source["inputCost"];
+	        this.outputCost = source["outputCost"];
+	        this.cacheCost = source["cacheCost"];
+	        this.totalCost = source["totalCost"];
 	    }
 	}
 	export class Breakdown {

@@ -19,3 +19,18 @@ const priceNum = new Intl.NumberFormat("en-US", {
 export function formatPrice(value: number) {
   return `$${priceNum.format(value)}`;
 }
+
+// 账单金额展示：小额保留足够精度（避免四舍五入成 $0），大额按常规货币位数。
+const costNum = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+const costSmallNum = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 6,
+  useGrouping: false,
+});
+export function formatCost(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "$0";
+  if (value < 0.01) return `$${costSmallNum.format(value)}`;
+  return `$${costNum.format(value)}`;
+}

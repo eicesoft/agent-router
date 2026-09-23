@@ -108,7 +108,7 @@ import { JsonBlock } from "./components/JsonBlock";
 import { DateRangeField } from "./components/DateRangeField";
 import { SkillsPanel } from "./components/SkillsPanel";
 import { SkillsLinkModal } from "./components/SkillsLinkModal";
-import { formatPrice, formatTokenCount, num } from "./lib/format";
+import { formatCost, formatPrice, formatTokenCount, num } from "./lib/format";
 function TokenValue({
   value,
   as = "strong",
@@ -589,7 +589,15 @@ export default function App() {
         onToggle={() => setCollapsed((value) => !value)}
         providerCount={data.providers.filter((p) => p.enabled).length}
         keyCount={data.apiKeys.filter((k) => k.enabled).length}
-        mappingCount={ensuredMappings.filter((m) => m.enabled).length}
+        mappingCount={
+          ensuredMappings.filter((m) => {
+            if (!m.enabled) return false;
+            // 与后端 effectiveMappings 一致：停用提供商上的映射不算可路由。
+            return data.providers.some(
+              (p) => p.id === m.providerId && p.enabled,
+            );
+          }).length
+        }
         agentCount={agentCount}
         skillCount={skillCount}
         proxyRunning={proxyRunning}
@@ -1655,8 +1663,22 @@ function UsagePanel() {
       output: acc.output + p.outputTokens,
       cached: acc.cached + p.cachedInputTokens,
       reasoning: acc.reasoning + p.reasoningOutputTokens,
+      inputCost: acc.inputCost + p.inputCost,
+      outputCost: acc.outputCost + p.outputCost,
+      cacheCost: acc.cacheCost + p.cacheCost,
+      totalCost: acc.totalCost + p.totalCost,
     }),
-    { requests: 0, input: 0, output: 0, cached: 0, reasoning: 0 },
+    {
+      requests: 0,
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      inputCost: 0,
+      outputCost: 0,
+      cacheCost: 0,
+      totalCost: 0,
+    },
   );
   const totalTokens = totals.input + totals.output;
   const cacheRate = totals.input > 0 ? (totals.cached / totals.input) * 100 : 0;
@@ -1673,6 +1695,10 @@ function UsagePanel() {
               缓存 <TokenValue value={totals.cached} as="span" /> · 缓存命中{" "}
               {cacheRate.toFixed(1)}%
             </small>
+            <small className="usage-cost-line">
+              输入费用 {formatCost(totals.inputCost)} · 缓存费用{" "}
+              {formatCost(totals.cacheCost)}
+            </small>
           </Card.Content>
         </Card>
         <Card className="metric">
@@ -1685,6 +1711,9 @@ function UsagePanel() {
               推理 <TokenValue value={totals.reasoning} as="span" /> ·
               随响应生成 的 Token
             </small>
+            <small className="usage-cost-line">
+              输出费用 {formatCost(totals.outputCost)}
+            </small>
           </Card.Content>
         </Card>
         <Card className="metric">
@@ -1694,6 +1723,9 @@ function UsagePanel() {
               <TokenValue value={totalTokens} />
             </div>
             <small>{num.format(totals.requests)} 次请求</small>
+            <small className="usage-cost-line">
+              总费用 {formatCost(totals.totalCost)}
+            </small>
           </Card.Content>
         </Card>
       </div>
@@ -1703,7 +1735,7 @@ function UsagePanel() {
             <div className="panel-title">
               <div>
                 <h2>提供商用量</h2>
-                <p>各提供商请求与 Token 分布</p>
+                <p>各提供商请求、Token 与费用分布</p>
               </div>
             </div>
             {breakdown.providers.length === 0 ? (
@@ -1721,7 +1753,7 @@ function UsagePanel() {
             <div className="panel-title">
               <div>
                 <h2>模型用量</h2>
-                <p>各模型请求与 Token 分布</p>
+                <p>各模型请求、Token 与费用分布</p>
               </div>
             </div>
             {breakdown.models.length === 0 ? (
@@ -1735,39 +1767,41 @@ function UsagePanel() {
           </Card.Content>
         </Card>
       </div>
-      <Card className="panel">
-        <Card.Content>
-          <div className="panel-title">
-            <div>
-              <h2>上游 Key 用量</h2>
-              <p>各上游 API Key 的请求与 Token 分布（按掩码显示）</p>
+      <div className="usage-row">
+        <Card className="panel usage-panel-half">
+          <Card.Content>
+            <div className="panel-title">
+              <div>
+                <h2>上游 Key 用量</h2>
+                <p>各上游 API Key 的请求、Token 与费用分布（按掩码显示）</p>
+              </div>
             </div>
-          </div>
-          {breakdown.credentials.length === 0 ? (
-            <p className="provider-model-empty">暂无用量数据</p>
-          ) : (
-            <UsageStatList
-              stats={breakdown.credentials}
-              totalTokens={totalTokens}
-            />
-          )}
-        </Card.Content>
-      </Card>
-      <Card className="panel">
-        <Card.Content>
-          <div className="panel-title">
-            <div>
-              <h2>密钥用量</h2>
-              <p>各本地 API 密钥的请求与 Token 分布</p>
+            {breakdown.credentials.length === 0 ? (
+              <p className="provider-model-empty">暂无用量数据</p>
+            ) : (
+              <UsageStatList
+                stats={breakdown.credentials}
+                totalTokens={totalTokens}
+              />
+            )}
+          </Card.Content>
+        </Card>
+        <Card className="panel usage-panel-half">
+          <Card.Content>
+            <div className="panel-title">
+              <div>
+                <h2>密钥用量</h2>
+                <p>各本地 API 密钥的请求、Token 与费用分布</p>
+              </div>
             </div>
-          </div>
-          {breakdown.keys.length === 0 ? (
-            <p className="provider-model-empty">暂无用量数据</p>
-          ) : (
-            <UsageStatList stats={breakdown.keys} totalTokens={totalTokens} />
-          )}
-        </Card.Content>
-      </Card>
+            {breakdown.keys.length === 0 ? (
+              <p className="provider-model-empty">暂无用量数据</p>
+            ) : (
+              <UsageStatList stats={breakdown.keys} totalTokens={totalTokens} />
+            )}
+          </Card.Content>
+        </Card>
+      </div>
     </section>
   );
 }
@@ -1789,15 +1823,30 @@ function UsageStatList({
         return (
           <div className="usage-stat" key={s.key}>
             <div className="usage-stat-top">
-              <b className="usage-stat-name" title={s.key}>
+              <b
+                className="usage-stat-name"
+                title={
+                  s.provider
+                    ? `${s.provider} · ${s.mask || s.name || s.key}`
+                    : s.key
+                }
+              >
+                {s.provider && (
+                  <span className="usage-stat-provider">{s.provider} ·</span>
+                )}
                 {s.mask || s.name || s.key}
               </b>
               {s.mask && s.name && (
                 <span className="usage-stat-alias">{s.name}</span>
               )}
-              <span className="usage-stat-tokens">
-                <TokenValue value={tokens} as="span" />
-                <span className="usage-stat-token-suffix">Tokens</span>
+              <span className="usage-stat-figures">
+                <span className="usage-stat-cost" title="总费用">
+                  {formatCost(s.totalCost)}
+                </span>
+                <span className="usage-stat-tokens">
+                  <TokenValue value={tokens} as="span" />
+                  <span className="usage-stat-token-suffix">Tokens</span>
+                </span>
               </span>
             </div>
             <div
@@ -1812,19 +1861,13 @@ function UsageStatList({
                 {num.format(s.requests)} 次请求 · 成功率{" "}
                 {successRate.toFixed(0)}%
               </span>
-              <span>
-                输出 <TokenValue value={s.outputTokens} as="span" /> ·{" "}
-                <Tooltip>
-                  <Tooltip.Trigger>
-                    <span className="usage-token-value">
-                      缓存命中 {cacheRate.toFixed(0)}%
-                    </span>
-                  </Tooltip.Trigger>
-                  <Tooltip.Content>
-                    缓存 {num.format(s.cachedInputTokens)} / 输入{" "}
-                    {num.format(s.inputTokens)}
-                  </Tooltip.Content>
-                </Tooltip>
+              <span
+                className="usage-stat-cost-detail"
+                title={`输入 ${formatCost(s.inputCost)} · 输出 ${formatCost(s.outputCost)} · 缓存 ${formatCost(s.cacheCost)}`}
+              >
+                入 {formatCost(s.inputCost)} · 出 {formatCost(s.outputCost)} ·
+                缓存 {formatCost(s.cacheCost)} · 缓存命中 {cacheRate.toFixed(0)}
+                %
               </span>
             </div>
           </div>

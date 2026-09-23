@@ -53,6 +53,7 @@ func TestResolveHonorsAliases(t *testing.T) {
 		ID: "mapped", ClientModel: "client-model", ProviderID: "p", UpstreamModel: "up",
 		// 前后空白要裁掉，与自己同名的别名要丢掉：它已经单独能命中。
 		Aliases: []string{" client-alias ", "client-model", "second-alias"}, Enabled: true,
+		InputPrice: 1.5, OutputPrice: 3, CacheReadPrice: 0.15,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -66,12 +67,29 @@ func TestResolveHonorsAliases(t *testing.T) {
 			t.Fatalf("%q did not resolve to its mapping: %#v ok=%v", name, mapping, ok)
 		}
 	}
-	if _, err := store.Save(ModelMapping{ID: "mapped", ClientModel: "client-model", ProviderID: "p", UpstreamModel: "up", Enabled: false}); err != nil {
+	// 计费展示按 provider+名字（含别名）取价；未知路由与错误提供商都是 0。
+	for _, name := range []string{"client-model", "client-alias"} {
+		if in, out, cache := store.PriceFor("p", name); in != 1.5 || out != 3 || cache != 0.15 {
+			t.Fatalf("PriceFor(%q) = %v,%v,%v", name, in, out, cache)
+		}
+	}
+	if in, out, cache := store.PriceFor("other", "client-model"); in != 0 || out != 0 || cache != 0 {
+		t.Fatalf("unknown provider should price at zero: %v,%v,%v", in, out, cache)
+	}
+	// 停用只改开关，价格与别名仍随整行保存：历史用量要继续按原价、原别名计费展示。
+	if _, err := store.Save(ModelMapping{
+		ID: "mapped", ClientModel: "client-model", ProviderID: "p", UpstreamModel: "up",
+		Aliases: []string{"client-alias", "second-alias"}, Enabled: false,
+		InputPrice: 1.5, OutputPrice: 3, CacheReadPrice: 0.15,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"client-model", "client-alias"} {
 		if _, ok := store.Resolve(name); ok {
 			t.Fatalf("disabled mapping still resolved %q", name)
+		}
+		if in, _, _ := store.PriceFor("p", name); in != 1.5 {
+			t.Fatalf("disabled mapping should still price %q, got %v", name, in)
 		}
 	}
 }

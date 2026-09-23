@@ -3,6 +3,7 @@ package usage
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -237,13 +238,22 @@ type UsageStat struct {
 	Name string `json:"name,omitempty"`
 	// Mask is the display form of an upstream key (ss****sfg), set only for the
 	// per-credential breakdown so a deleted credential stays identifiable.
-	Mask                  string `json:"mask,omitempty"`
-	Requests              int    `json:"requests"`
-	Successes             int    `json:"successes"`
-	InputTokens           int    `json:"inputTokens"`
-	OutputTokens          int    `json:"outputTokens"`
-	CachedInputTokens     int    `json:"cachedInputTokens"`
-	ReasoningOutputTokens int    `json:"reasoningOutputTokens"`
+	Mask string `json:"mask,omitempty"`
+	// ProviderID/Provider are set only for credential rows: the raw id comes
+	// from the covering-index query, and the app layer resolves Provider as a
+	// display name the same way UsageByProvider fills Name.
+	ProviderID            string  `json:"providerId,omitempty"`
+	Provider              string  `json:"provider,omitempty"`
+	Requests              int     `json:"requests"`
+	Successes             int     `json:"successes"`
+	InputTokens           int     `json:"inputTokens"`
+	OutputTokens          int     `json:"outputTokens"`
+	CachedInputTokens     int     `json:"cachedInputTokens"`
+	ReasoningOutputTokens int     `json:"reasoningOutputTokens"`
+	InputCost             float64 `json:"inputCost"`
+	OutputCost            float64 `json:"outputCost"`
+	CacheCost             float64 `json:"cacheCost"`
+	TotalCost             float64 `json:"totalCost"`
 }
 
 // Usage aggregates run on every visit to the usage panel, and request_logs
@@ -252,49 +262,61 @@ type UsageStat struct {
 // plan that falls back to scanning the table reads the body overflow pages and
 // turns opening the panel into hundreds of milliseconds of disk I/O.
 const (
-	usageByKeyQuery = `SELECT COALESCE(NULLIF(token_id,''),token_name),COALESCE(NULLIF(token_name,''),'未命名密钥'),COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM request_logs GROUP BY COALESCE(NULLIF(token_id,''),token_name) ORDER BY COUNT(*) DESC, token_name`
+	// 每条查询都按「维度 × 路由(provider, model)」出粒度，再在 Go 里按映射单价
+	// 算费并上卷到维度：同名模型在不同提供商上的单价不同，先上卷 token 再算费
+	// 会把整条 failover 链按错价计。覆盖索引必须带上 provider_id/client_model。
+	usageKeyRouteQuery = `SELECT COALESCE(NULLIF(token_id,''),token_name),COALESCE(NULLIF(token_name,''),'未命名密钥'),provider_id,client_model,COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM request_logs GROUP BY COALESCE(NULLIF(token_id,''),token_name),provider_id,client_model`
 	// The predicate is written as two sargable comparisons rather than
 	// COALESCE(credential_id,credential_name) <> '': SQLite only routes a query
 	// through a covering index when the WHERE clause is indexable, and the
 	// non-sargable form forces a full table scan. GROUP BY/MAX keep referring to
 	// the raw columns so the grouping key stays COALESCE(NULLIF(...)).
-	usageByCredentialQuery = `SELECT COALESCE(NULLIF(credential_id,''),NULLIF(credential_name,'')),COALESCE(NULLIF(credential_name,''),'默认密钥'),COALESCE(MAX(NULLIF(credential_mask,'')),''),COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM request_logs WHERE credential_id <> '' OR credential_name <> '' GROUP BY COALESCE(NULLIF(credential_id,''),credential_name) ORDER BY COUNT(*) DESC, credential_name`
+	usageByCredentialRouteQuery = `SELECT COALESCE(NULLIF(credential_id,''),NULLIF(credential_name,'')),COALESCE(NULLIF(credential_name,''),'默认密钥'),COALESCE(MAX(NULLIF(credential_mask,'')),''),provider_id,client_model,COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM request_logs WHERE credential_id <> '' OR credential_name <> '' GROUP BY COALESCE(NULLIF(credential_id,''),credential_name),provider_id,client_model`
+	usageRouteQuery             = `SELECT provider_id,model,COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM usage_events WHERE provider_id<>'' AND model<>'' GROUP BY provider_id,model`
 )
 
-// usageByDimensionQuery aggregates one provider/model dimension. The column is
-// never caller-supplied, so it is interpolated rather than bound.
-func usageByDimensionQuery(column string) string {
-	return `SELECT ` + column + `,COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM usage_events WHERE ` + column + `<>'' GROUP BY ` + column + ` ORDER BY COUNT(*) DESC, ` + column
+func (t *SQLiteTracker) UsageByProvider(price PriceFunc) []UsageStat {
+	return t.usageRoutesBy(price, true)
+}
+func (t *SQLiteTracker) UsageByModel(price PriceFunc) []UsageStat {
+	return t.usageRoutesBy(price, false)
 }
 
-func (t *SQLiteTracker) UsageByProvider() []UsageStat {
-	return t.usageByDimension("provider_id")
-}
-func (t *SQLiteTracker) UsageByModel() []UsageStat {
-	return t.usageByDimension("model")
-}
-
-// UsageByKey aggregates request counts and tokens per local API key, using
-// token_id as the durable group key and token_name as the display name. Key id
-// wins over name so renamed keys stay grouped.
-func (t *SQLiteTracker) UsageByKey() []UsageStat {
-	rows, err := t.db.Query(usageByKeyQuery)
+// UsageByKey aggregates request counts, tokens, and cost per local API key,
+// using token_id as the durable group key and token_name as the display name.
+// Key id wins over name so renamed keys stay grouped.
+func (t *SQLiteTracker) UsageByKey(price PriceFunc) []UsageStat {
+	rows, err := t.db.Query(usageKeyRouteQuery)
 	if err != nil {
 		return []UsageStat{}
 	}
 	defer rows.Close()
-	stats := make([]UsageStat, 0, 8)
+	byKey := map[string]*UsageStat{}
+	order := []string{}
 	for rows.Next() {
+		var key, name, providerID, clientModel string
 		var stat UsageStat
-		if err := rows.Scan(&stat.Key, &stat.Name, &stat.Requests, &stat.Successes, &stat.InputTokens, &stat.OutputTokens, &stat.CachedInputTokens, &stat.ReasoningOutputTokens); err != nil {
+		if err := rows.Scan(&key, &name, &providerID, &clientModel, &stat.Requests, &stat.Successes, &stat.InputTokens, &stat.OutputTokens, &stat.CachedInputTokens, &stat.ReasoningOutputTokens); err != nil {
 			return []UsageStat{}
 		}
-		stats = append(stats, stat)
+		merged, ok := byKey[key]
+		if !ok {
+			merged = &UsageStat{Key: key, Name: name}
+			byKey[key] = merged
+			order = append(order, key)
+		}
+		merged.Requests += stat.Requests
+		merged.Successes += stat.Successes
+		merged.InputTokens += stat.InputTokens
+		merged.OutputTokens += stat.OutputTokens
+		merged.CachedInputTokens += stat.CachedInputTokens
+		merged.ReasoningOutputTokens += stat.ReasoningOutputTokens
+		addCost(merged, price, providerID, clientModel, stat.InputTokens, stat.OutputTokens, stat.CachedInputTokens)
 	}
 	if err := rows.Err(); err != nil {
 		return []UsageStat{}
 	}
-	return stats
+	return sortUsageStats(order, byKey)
 }
 
 // UsageByCredential aggregates per upstream key, using credential_id as the
@@ -302,43 +324,100 @@ func (t *SQLiteTracker) UsageByKey() []UsageStat {
 // recorded before a credential was identifiable group under their display name.
 // MAX(credential_mask) collapses the snapshot's duplicates to one representative
 // mask per group.
-func (t *SQLiteTracker) UsageByCredential() []UsageStat {
-	rows, err := t.db.Query(usageByCredentialQuery)
+func (t *SQLiteTracker) UsageByCredential(price PriceFunc) []UsageStat {
+	rows, err := t.db.Query(usageByCredentialRouteQuery)
 	if err != nil {
 		return []UsageStat{}
 	}
 	defer rows.Close()
-	stats := make([]UsageStat, 0, 8)
+	byKey := map[string]*UsageStat{}
+	order := []string{}
 	for rows.Next() {
+		var key, name, mask, providerID, clientModel string
 		var stat UsageStat
-		if err := rows.Scan(&stat.Key, &stat.Name, &stat.Mask, &stat.Requests, &stat.Successes, &stat.InputTokens, &stat.OutputTokens, &stat.CachedInputTokens, &stat.ReasoningOutputTokens); err != nil {
+		if err := rows.Scan(&key, &name, &mask, &providerID, &clientModel, &stat.Requests, &stat.Successes, &stat.InputTokens, &stat.OutputTokens, &stat.CachedInputTokens, &stat.ReasoningOutputTokens); err != nil {
 			return []UsageStat{}
 		}
-		stats = append(stats, stat)
+		merged, ok := byKey[key]
+		if !ok {
+			merged = &UsageStat{Key: key, Name: name, Mask: mask, ProviderID: providerID}
+			byKey[key] = merged
+			order = append(order, key)
+		}
+		if mask != "" {
+			merged.Mask = mask
+		}
+		if providerID != "" && merged.ProviderID == "" {
+			merged.ProviderID = providerID
+		}
+		merged.Requests += stat.Requests
+		merged.Successes += stat.Successes
+		merged.InputTokens += stat.InputTokens
+		merged.OutputTokens += stat.OutputTokens
+		merged.CachedInputTokens += stat.CachedInputTokens
+		merged.ReasoningOutputTokens += stat.ReasoningOutputTokens
+		addCost(merged, price, providerID, clientModel, stat.InputTokens, stat.OutputTokens, stat.CachedInputTokens)
 	}
 	if err := rows.Err(); err != nil {
 		return []UsageStat{}
 	}
-	return stats
+	return sortUsageStats(order, byKey)
 }
 
-func (t *SQLiteTracker) usageByDimension(column string) []UsageStat {
-	rows, err := t.db.Query(usageByDimensionQuery(column))
+// usageRoutesBy reads provider×model routes once and rolls them up to either
+// dimension, pricing each route before the fold so mixed-price chains bill
+// correctly.
+func (t *SQLiteTracker) usageRoutesBy(price PriceFunc, byProvider bool) []UsageStat {
+	rows, err := t.db.Query(usageRouteQuery)
 	if err != nil {
 		return []UsageStat{}
 	}
 	defer rows.Close()
-	stats := make([]UsageStat, 0, 8)
+	byDim := map[string]*UsageStat{}
+	order := []string{}
 	for rows.Next() {
+		var providerID, model string
 		var stat UsageStat
-		if err := rows.Scan(&stat.Key, &stat.Requests, &stat.Successes, &stat.InputTokens, &stat.OutputTokens, &stat.CachedInputTokens, &stat.ReasoningOutputTokens); err != nil {
+		if err := rows.Scan(&providerID, &model, &stat.Requests, &stat.Successes, &stat.InputTokens, &stat.OutputTokens, &stat.CachedInputTokens, &stat.ReasoningOutputTokens); err != nil {
 			return []UsageStat{}
 		}
-		stats = append(stats, stat)
+		key := providerID
+		if !byProvider {
+			key = model
+		}
+		merged, ok := byDim[key]
+		if !ok {
+			merged = &UsageStat{Key: key}
+			byDim[key] = merged
+			order = append(order, key)
+		}
+		merged.Requests += stat.Requests
+		merged.Successes += stat.Successes
+		merged.InputTokens += stat.InputTokens
+		merged.OutputTokens += stat.OutputTokens
+		merged.CachedInputTokens += stat.CachedInputTokens
+		merged.ReasoningOutputTokens += stat.ReasoningOutputTokens
+		addCost(merged, price, providerID, model, stat.InputTokens, stat.OutputTokens, stat.CachedInputTokens)
 	}
 	if err := rows.Err(); err != nil {
 		return []UsageStat{}
 	}
+	return sortUsageStats(order, byDim)
+}
+
+// sortUsageStats keeps the historical order (first-seen from COUNT(*) DESC SQL)
+// stable, then sorts by request count so the UI still ranks busiest first.
+func sortUsageStats(order []string, byKey map[string]*UsageStat) []UsageStat {
+	stats := make([]UsageStat, 0, len(order))
+	for _, key := range order {
+		stats = append(stats, *byKey[key])
+	}
+	sort.SliceStable(stats, func(i, j int) bool {
+		if stats[i].Requests != stats[j].Requests {
+			return stats[i].Requests > stats[j].Requests
+		}
+		return stats[i].Key < stats[j].Key
+	})
 	return stats
 }
 

@@ -99,7 +99,7 @@ func TestUsageByKeyAndBreakdown(t *testing.T) {
 	defer db.Close()
 	tracker := NewSQLiteTracker(db)
 	for _, event := range []Event{
-		{TokenID: "key-a", TokenName: "甲", ProviderID: "openai", ClientModel: "chat", InputTokens: 10, OutputTokens: 5, Success: true},
+		{TokenID: "key-a", TokenName: "甲", ProviderID: "openai", ClientModel: "chat", InputTokens: 10, OutputTokens: 5, CachedInputTokens: 4, Success: true},
 		{TokenID: "key-a", TokenName: "甲", ProviderID: "openai", ClientModel: "chat", InputTokens: 1, OutputTokens: 2, Success: false},
 		{TokenName: "乙", ProviderID: "deepseek", ClientModel: "reasoner", InputTokens: 7, OutputTokens: 3, Success: true},
 	} {
@@ -107,20 +107,121 @@ func TestUsageByKeyAndBreakdown(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	keys := tracker.UsageByKey()
+	keys := tracker.UsageByKey(nil)
 	if len(keys) != 2 {
 		t.Fatalf("got %d key stats, want 2: %+v", len(keys), keys)
 	}
-	if keys[0].Key != "key-a" || keys[0].Requests != 2 || keys[0].Successes != 1 || keys[0].InputTokens != 11 || keys[0].OutputTokens != 7 {
+	if keys[0].Key != "key-a" || keys[0].Requests != 2 || keys[0].Successes != 1 || keys[0].InputTokens != 11 || keys[0].OutputTokens != 7 || keys[0].CachedInputTokens != 4 {
 		t.Fatalf("unexpected key-a stats: %+v", keys[0])
 	}
 	// 空 token_id 回退到 token_name 分组。
 	if keys[1].Key != "乙" || keys[1].Requests != 1 {
 		t.Fatalf("unexpected fallback key stats: %+v", keys[1])
 	}
-	byProvider := tracker.UsageByProvider()
+	byProvider := tracker.UsageByProvider(nil)
 	if len(byProvider) != 2 || byProvider[0].Key != "openai" || byProvider[0].InputTokens != 11 {
 		t.Fatalf("unexpected provider stats: %+v", byProvider)
+	}
+}
+
+// 上游 Key 用量要在 key 前显示提供商名，凭据行必须带出 provider_id 供上层解析。
+func TestUsageByCredentialCarriesProviderID(t *testing.T) {
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "agent-router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tracker := NewSQLiteTracker(db)
+	if err := tracker.Record(Event{
+		ProviderID: "openai", ProviderName: "OpenAI", ClientModel: "chat",
+		CredentialID: "cred-1", CredentialName: "主", CredentialMask: "sk****999",
+		Success: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stats := tracker.UsageByCredential(nil)
+	if len(stats) != 1 || stats[0].ProviderID != "openai" {
+		t.Fatalf("credential stats = %+v, want providerId openai", stats)
+	}
+}
+
+// 计费公式：输入费扣掉缓存 token，输出费按输出 token，缓存费按缓存 token，
+// 总价是三者之和。同名模型在不同提供商上单价不同时必须按各自路由计价再上卷。
+func TestUsageBreakdownPricedPerRoute(t *testing.T) {
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "agent-router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tracker := NewSQLiteTracker(db)
+	for _, event := range []Event{
+		// openai/chat: 入 $10/M、出 $20/M、缓存 $1/M
+		// uncached=6, out=5, cache=4 → 6*10 + 5*20 + 4*1 全部 /1e6
+		{TokenID: "key-a", ProviderID: "openai", ClientModel: "chat", InputTokens: 10, OutputTokens: 5, CachedInputTokens: 4, Success: true},
+		// deepseek/reasoner: 入 $1/M、出 $2/M、缓存 $0.5/M
+		// uncached=8, out=3, cache=2 → 8*1 + 3*2 + 2*0.5
+		{TokenID: "key-a", ProviderID: "deepseek", ClientModel: "chat", InputTokens: 10, OutputTokens: 3, CachedInputTokens: 2, Success: true},
+	} {
+		if err := tracker.Record(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	price := func(providerID, _ string) (input, output, cacheRead float64) {
+		switch providerID {
+		case "openai":
+			return 10, 20, 1
+		case "deepseek":
+			return 1, 2, 0.5
+		}
+		return 0, 0, 0
+	}
+	const eps = 1e-12
+	providers := tracker.UsageByProvider(price)
+	if len(providers) != 2 {
+		t.Fatalf("providers = %+v", providers)
+	}
+	// 请求多的 openai 排前（各 1 条时按 key 字典序：deepseek < openai… 都是 1，
+	// 所以按 Key 升序 deepseek 在前）。逐个断言金额。
+	byID := map[string]UsageStat{}
+	for _, s := range providers {
+		byID[s.Key] = s
+	}
+	openai := byID["openai"]
+	wantIn := float64(6*10) / 1e6
+	wantOut := float64(5*20) / 1e6
+	wantCache := float64(4*1) / 1e6
+	if diff := openai.InputCost - wantIn; diff > eps || diff < -eps {
+		t.Fatalf("openai input cost = %v, want %v", openai.InputCost, wantIn)
+	}
+	if diff := openai.OutputCost - wantOut; diff > eps || diff < -eps {
+		t.Fatalf("openai output cost = %v, want %v", openai.OutputCost, wantOut)
+	}
+	if diff := openai.CacheCost - wantCache; diff > eps || diff < -eps {
+		t.Fatalf("openai cache cost = %v, want %v", openai.CacheCost, wantCache)
+	}
+	if diff := openai.TotalCost - (wantIn + wantOut + wantCache); diff > eps || diff < -eps {
+		t.Fatalf("openai total cost = %v, want %v", openai.TotalCost, wantIn+wantOut+wantCache)
+	}
+	deepseek := byID["deepseek"]
+	wantDeep := (float64(8*1) + float64(3*2) + float64(2*0.5)) / 1e6
+	if diff := deepseek.TotalCost - wantDeep; diff > eps || diff < -eps {
+		t.Fatalf("deepseek total = %v, want %v", deepseek.TotalCost, wantDeep)
+	}
+	// 同名模型跨提供商：费用按路由加总，而不是按某一家的单价乘总 token。
+	models := tracker.UsageByModel(price)
+	if len(models) != 1 || models[0].Key != "chat" {
+		t.Fatalf("models = %+v", models)
+	}
+	wantModel := openai.TotalCost + wantDeep
+	if diff := models[0].TotalCost - wantModel; diff > eps || diff < -eps {
+		t.Fatalf("model total = %v, want %v", models[0].TotalCost, wantModel)
+	}
+	keys := tracker.UsageByKey(price)
+	if len(keys) != 1 || keys[0].Key != "key-a" {
+		t.Fatalf("keys = %+v", keys)
+	}
+	if diff := keys[0].TotalCost - wantModel; diff > eps || diff < -eps {
+		t.Fatalf("key total = %v, want %v", keys[0].TotalCost, wantModel)
 	}
 }
 
@@ -138,10 +239,9 @@ func TestUsageBreakdownAvoidsFullTableScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, query := range map[string]string{
-		"keys":        usageByKeyQuery,
-		"credentials": usageByCredentialQuery,
-		"providers":   usageByDimensionQuery("provider_id"),
-		"models":      usageByDimensionQuery("model"),
+		"keys":        usageKeyRouteQuery,
+		"credentials": usageByCredentialRouteQuery,
+		"routes":      usageRouteQuery,
 	} {
 		if plan := explainPlan(t, db, query); !strings.Contains(plan, "COVERING INDEX") {
 			t.Errorf("%s aggregation does not use a covering index: %s", name, plan)
