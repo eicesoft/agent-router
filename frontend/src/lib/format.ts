@@ -11,16 +11,18 @@ export function formatTokenCount(value: number) {
   return num.format(value);
 }
 
-// 单价（USD / 百万 tokens）展示：去掉多余尾零，2.5 → $2.5，0.0025 → $0.0025。
+// 单价（每百万 tokens）展示：去掉多余尾零，2.5 → 2.5，0.0025 → 0.0025。
+// 不带货币符号——映射里填的不一定是美元。
 const priceNum = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 6,
   useGrouping: false,
 });
 export function formatPrice(value: number) {
-  return `$${priceNum.format(value)}`;
+  return priceNum.format(value);
 }
 
-// 账单金额展示：小额保留足够精度（避免四舍五入成 $0），大额按常规货币位数。
+// 费用金额展示：小额保留足够精度（避免四舍五入成 0），大额按常规小数位数。
+// 同 formatPrice，不加货币符号。
 const costNum = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -30,7 +32,7 @@ const costSmallNum = new Intl.NumberFormat("en-US", {
   useGrouping: false,
 });
 export function formatCost(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return "$0";
-  if (value < 0.01) return `$${costSmallNum.format(value)}`;
-  return `$${costNum.format(value)}`;
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  if (value < 0.01) return costSmallNum.format(value);
+  return costNum.format(value);
 }

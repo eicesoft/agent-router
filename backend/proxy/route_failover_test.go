@@ -66,7 +66,7 @@ func chainTestServer(t *testing.T, primaryURL, backupURL string) (*Server, *sql.
 	if _, err := pool.Add("backup", "b-key", "sk-backup"); err != nil {
 		t.Fatal(err)
 	}
-	return New(registry, mappings, pool, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"}), db
+	return New(registry, mappings, pool, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"}, nil), db
 }
 
 func okBody(id string) string {
@@ -119,7 +119,7 @@ func TestSameClientModelFailsOverToSecondProvider(t *testing.T) {
 	mu.Unlock()
 
 	// 用量与日志必须记应答的那家，否则同名链上根本看不出是谁服务的。
-	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func anthropicChainTestServer(t *testing.T, primaryURL, backupURL string) (*Serv
 	if _, err := pool.Add("backup", "b-key", "sk-backup"); err != nil {
 		t.Fatal(err)
 	}
-	return New(registry, mappings, pool, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"}), db
+	return New(registry, mappings, pool, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"}, nil), db
 }
 
 // /v1/messages 的同名链同样要跨提供商 failover，日志记应答的那家。
@@ -308,7 +308,7 @@ func TestAnthropicMessagesFailsOverToSecondProvider(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "msg-backup") {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +458,7 @@ func TestChainRoundRobinStillFailsOver(t *testing.T) {
 		t.Fatalf("backup did not serve both requests: %d", backupHits)
 	}
 	mu.Unlock()
-	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -264,7 +264,7 @@ func TestResponsesConvertsRequestAndNonStreamingReply(t *testing.T) {
 	}
 
 	// 落库：模型映射与 token 都要记进请求日志
-	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -664,7 +664,7 @@ func TestResponsesTruncatedStreamOmitsCompletion(t *testing.T) {
 		t.Fatalf("expected response.failed: %s", body)
 	}
 
-	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -714,7 +714,7 @@ func TestResponsesPassesUpstreamErrorThrough(t *testing.T) {
 		t.Fatalf("upstream body was rewritten: %s", response.Body.String())
 	}
 
-	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -735,7 +735,7 @@ func TestResponsesLogsDroppedHostedTools(t *testing.T) {
 	if response.Code != 200 {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

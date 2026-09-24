@@ -108,6 +108,7 @@ import { JsonBlock } from "./components/JsonBlock";
 import { DateRangeField } from "./components/DateRangeField";
 import { SkillsPanel } from "./components/SkillsPanel";
 import { SkillsLinkModal } from "./components/SkillsLinkModal";
+import { PluginsPanel } from "./components/PluginsPanel";
 import { formatCost, formatPrice, formatTokenCount, num } from "./lib/format";
 function TokenValue({
   value,
@@ -143,7 +144,17 @@ const LOG_COLUMNS = [
   "耗时",
   "时间",
 ];
-const LOG_COLUMN_WIDTHS = [72, 76, 150, 136, 90, 150, 200, 200, 140, 72, 168];
+const LOG_COLUMN_WIDTHS = [72, 76, 150, 136, 90, 150, 200, 200, 176, 72, 168];
+
+// 日志里 pluginId → 展示名；与 backend/plugin catalog 对齐。
+const PLUGIN_NAMES: Record<string, string> = {
+  session_strip: "会话去重",
+  caveman: "Caveman",
+};
+
+function pluginDisplayName(id: string): string {
+  return PLUGIN_NAMES[id] || id;
+}
 const pageMeta: Record<Page, { title: string; description: string }> = {
   overview: {
     title: "控制台概览",
@@ -173,6 +184,10 @@ const pageMeta: Record<Page, { title: string; description: string }> = {
   agents: {
     title: "Agent",
     description: "为各 Agent CLI 生成指向本地网关的配置模板。",
+  },
+  plugins: {
+    title: "功能插件",
+    description: "配置在请求到达模型前对输入做处理的插件。",
   },
   skills: {
     title: "Skills",
@@ -748,6 +763,8 @@ export default function App() {
                 void loadRequestLogs(nextPage, logFilter)
               }
             />
+          ) : page === "plugins" ? (
+            <PluginsPanel />
           ) : (
             <AgentTemplates
               mappings={ensuredMappings}
@@ -1148,6 +1165,10 @@ function RequestLogs({
             缓存 <TokenValue value={stats.cachedInputTokens} as="span" /> ·
             缓存命中 {cacheRate.toFixed(1)}%
           </small>
+          <small className="usage-cost-line">
+            输入费用 {formatCost(stats.inputCost)} · 缓存费用{" "}
+            {formatCost(stats.cacheCost)}
+          </small>
         </div>
         <div className="request-log-stat">
           <div className="request-log-stat-head">
@@ -1156,6 +1177,9 @@ function RequestLogs({
           </div>
           <small>
             推理 <TokenValue value={stats.reasoningOutputTokens} as="span" />
+          </small>
+          <small className="usage-cost-line">
+            输出费用 {formatCost(stats.outputCost)}
           </small>
         </div>
         <div className="request-log-stat">
@@ -1166,6 +1190,9 @@ function RequestLogs({
           <small>
             {num.format(stats.cachedInputTokens)} 缓存 / 输入{" "}
             {num.format(stats.inputTokens)}
+          </small>
+          <small className="usage-cost-line">
+            总费用 {formatCost(stats.totalCost)}
           </small>
         </div>
         <div className="request-log-stat">
@@ -1475,13 +1502,54 @@ function RequestLogs({
                           <span className="request-log-tokens-value">
                             {num.format(log.inputTokens)} /{" "}
                             {num.format(log.outputTokens)}
+                            {(() => {
+                              const saved = (log.pluginDeltas ?? []).reduce(
+                                (sum, d) => sum + (d.saved > 0 ? d.saved : 0),
+                                0,
+                              );
+                              return saved > 0 ? (
+                                <span className="request-log-plugin-saved">
+                                  −{formatTokenCount(saved)}
+                                </span>
+                              ) : null;
+                            })()}
                           </span>
                         </Tooltip.Trigger>
                         <Tooltip.Content>
-                          输入 {num.format(log.inputTokens)} · 输出{" "}
-                          {num.format(log.outputTokens)} · 缓存{" "}
-                          {num.format(log.cachedInputTokens)} · 推理{" "}
-                          {num.format(log.reasoningOutputTokens)}
+                          <div>
+                            输入 {num.format(log.inputTokens)} · 输出{" "}
+                            {num.format(log.outputTokens)} · 缓存{" "}
+                            {num.format(log.cachedInputTokens)} · 推理{" "}
+                            {num.format(log.reasoningOutputTokens)}
+                          </div>
+                          {(log.pluginDeltas ?? [])
+                            .filter(
+                              (d) =>
+                                d.pluginId &&
+                                (d.saved > 0 || d.after > d.before),
+                            )
+                            .map((d) => (
+                              <div
+                                key={d.pluginId}
+                                className="request-log-plugin-savings"
+                              >
+                                {d.saved > 0 ? (
+                                  <>
+                                    {pluginDisplayName(d.pluginId)} 节省{" "}
+                                    {num.format(d.saved)}（
+                                    {num.format(d.before)} →{" "}
+                                    {num.format(d.after)}）
+                                  </>
+                                ) : (
+                                  <>
+                                    {pluginDisplayName(d.pluginId)} 注入 +
+                                    {num.format(d.after - d.before)}（
+                                    {num.format(d.before)} →{" "}
+                                    {num.format(d.after)}）
+                                  </>
+                                )}
+                              </div>
+                            ))}
                         </Tooltip.Content>
                       </Tooltip>
                     </td>
@@ -2396,7 +2464,7 @@ function Mappings({
                           </span>
                         )}
                         {showPrice && (
-                          <span title="单价（USD / 百万 tokens）">
+                          <span title="单价（每百万 tokens）">
                             {priceParts.join(" · ")}
                           </span>
                         )}

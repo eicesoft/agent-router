@@ -27,7 +27,7 @@ export type MappingFormState = {
   inputTypes: string[];
   inputContextSize: number;
   outputSize: number;
-  // 单价（USD / 百万 tokens），默认 0 表示未设置；仅存储与展示。
+  // 单价（每百万 tokens），默认 0 表示未设置；仅存储与展示。
   inputPrice: number;
   outputPrice: number;
   cacheReadPrice: number;
@@ -436,8 +436,8 @@ export function MappingDrawer({
                     ?
                   </Tooltip.Trigger>
                   <Tooltip.Content>
-                    单价（USD / 百万 tokens，默认 0 即未设置）：仅 UI
-                    配置展示，不参与计费。
+                    单价（每百万 tokens，默认 0 即未设置）：仅 UI
+                    配置展示，不参与计费；货币单位由你自行约定。
                   </Tooltip.Content>
                 </Tooltip>
               </b>
@@ -457,8 +457,7 @@ export function MappingDrawer({
                         ?
                       </Tooltip.Trigger>
                       <Tooltip.Content>
-                        每 100 万输入 tokens 的价格，单位美元（USD / 1M
-                        tokens）。
+                        每 100 万输入 tokens 的价格。
                       </Tooltip.Content>
                     </Tooltip>
                   </Label>
@@ -485,8 +484,7 @@ export function MappingDrawer({
                         ?
                       </Tooltip.Trigger>
                       <Tooltip.Content>
-                        每 100 万输出 tokens 的价格，单位美元（USD / 1M
-                        tokens）。
+                        每 100 万输出 tokens 的价格。
                       </Tooltip.Content>
                     </Tooltip>
                   </Label>
@@ -516,8 +514,7 @@ export function MappingDrawer({
                         ?
                       </Tooltip.Trigger>
                       <Tooltip.Content>
-                        每 100 万 cache 读 tokens 的价格，单位美元（USD / 1M
-                        tokens）。
+                        每 100 万 cache 读 tokens 的价格。
                       </Tooltip.Content>
                     </Tooltip>
                   </Label>

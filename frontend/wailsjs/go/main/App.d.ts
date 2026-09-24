@@ -6,6 +6,7 @@ import {provider} from '../models';
 import {main} from '../models';
 import {usage} from '../models';
 import {skills} from '../models';
+import {plugin} from '../models';
 import {templates} from '../models';
 import {proxy} from '../models';
 import {config} from '../models';
@@ -46,6 +47,8 @@ export function ListDevModels():Promise<Array<provider.DevModel>>;
 
 export function ListDevProviders():Promise<Array<provider.DevProvider>>;
 
+export function ListPlugins():Promise<Array<plugin.Info>>;
+
 export function ListProviderCredentials(arg1:string):Promise<Array<credential.Credential>>;
 
 export function ListRequestLogs(arg1:number,arg2:number,arg3:usage.RequestLogFilter):Promise<usage.RequestLogPage>;
@@ -84,6 +87,8 @@ export function SaveSkillBody(arg1:string,arg2:string):Promise<void>;
 
 export function SetChainMode(arg1:string,arg2:string):Promise<void>;
 
+export function SetPluginConfig(arg1:string,arg2:Record<string, string>):Promise<void>;
+
 export function SetProviderAPIKey(arg1:string,arg2:string):Promise<void>;
 
 export function SetProviderCredentialMode(arg1:string,arg2:string):Promise<void>;
@@ -95,6 +100,8 @@ export function SetSkillLink(arg1:string,arg2:string,arg3:boolean):Promise<void>
 export function Startup(arg1:context.Context):Promise<void>;
 
 export function ToggleLocalAPIKey(arg1:string,arg2:boolean):Promise<void>;
+
+export function TogglePlugin(arg1:string,arg2:boolean):Promise<void>;
 
 export function ToggleProvider(arg1:string,arg2:boolean):Promise<void>;
 

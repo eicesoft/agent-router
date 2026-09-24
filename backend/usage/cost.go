@@ -35,3 +35,13 @@ func addCost(stat *UsageStat, price PriceFunc, providerID, clientModel string, i
 	stat.CacheCost += cacheCost
 	stat.TotalCost += total
 }
+
+// addToCost folds one route's cost into a request-log stats row (same fields,
+// different struct so the log panel does not carry UsageStat's breakdown keys).
+func addToCost(stats *RequestLogStats, price PriceFunc, providerID, clientModel string, input, output, cached int) {
+	inCost, outCost, cacheCost, total := costOf(price, providerID, clientModel, input, output, cached)
+	stats.InputCost += inCost
+	stats.OutputCost += outCost
+	stats.CacheCost += cacheCost
+	stats.TotalCost += total
+}

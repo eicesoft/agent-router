@@ -15,6 +15,7 @@ import (
 	"agent-router/backend/config"
 	"agent-router/backend/credential"
 	"agent-router/backend/envcfg"
+	"agent-router/backend/plugin"
 	"agent-router/backend/provider"
 	"agent-router/backend/proxy"
 	"agent-router/backend/secret"
@@ -41,6 +42,8 @@ type App struct {
 	// credentials is the pool of upstream keys. The proxy reaches keys only
 	// through it, so it is the single owner of which key serves a request.
 	credentials *credential.Pool
+	// plugins is the feature-plugin registry (enable flags + cumulative stats).
+	plugins *plugin.Store
 
 	// gatewayAddr is the listen address the proxy was last started with;
 	// SaveSettings updates it when the host/port changes. Address changes
@@ -84,6 +87,10 @@ func NewApp() *App {
 	if err != nil {
 		panic(fmt.Errorf("load provider credentials: %w", err))
 	}
+	plugins, err := plugin.NewStore(db)
+	if err != nil {
+		panic(fmt.Errorf("load plugins: %w", err))
+	}
 	return &App{
 		gatewayAddr: current.Address(),
 		db:          db,
@@ -93,9 +100,10 @@ func NewApp() *App {
 		usage:       tracker,
 		secrets:     keychain,
 		keys:        keys,
-		proxy:       proxy.New(providers, mappings, credentials, tracker, keys),
+		proxy:       proxy.New(providers, mappings, credentials, tracker, keys, plugins),
 		settings:    prefs,
 		credentials: credentials,
+		plugins:     plugins,
 	}
 }
 
@@ -123,6 +131,7 @@ func (a *App) GetBootstrap() Bootstrap {
 		ProxyRunning: a.proxy.Running(),
 		Settings:     a.appSettings(),
 		ChainModes:   a.mappings.ChainModes(),
+		Plugins:      a.plugins.List(),
 	}
 }
 
@@ -467,6 +476,22 @@ func (a *App) SaveAgentPreset(input agent.Preset) (agent.Preset, error) {
 	return a.agents.Save(input)
 }
 
+// ListPlugins returns the built-in plugin catalog merged with enable flags
+// and cumulative compression stats.
+func (a *App) ListPlugins() []plugin.Info {
+	return a.plugins.List()
+}
+
+// TogglePlugin enables or disables one plugin by id.
+func (a *App) TogglePlugin(id string, enabled bool) error {
+	return a.plugins.SetEnabled(id, enabled)
+}
+
+// SetPluginConfig replaces one plugin's settings map (e.g. caveman level).
+func (a *App) SetPluginConfig(id string, config map[string]string) error {
+	return a.plugins.SetConfig(id, config)
+}
+
 // SkillSummary is the skills page listing: every discovered skill plus the
 // roots they came from and the set of conflicting (duplicate) names.
 type SkillSummary struct {
@@ -569,8 +594,9 @@ func publishable(items []skills.Skill) []skills.Skill {
 }
 
 // ListRequestLogs supplies the paginated request history shown in the desktop UI.
+// Stats costs follow the filter and use mapping unit prices (USD / 1M tokens).
 func (a *App) ListRequestLogs(page, pageSize int, filter usage.RequestLogFilter) (usage.RequestLogPage, error) {
-	return a.usage.ListRequestLogs(page, pageSize, filter)
+	return a.usage.ListRequestLogs(page, pageSize, filter, a.mappings.PriceFor)
 }
 
 // GetRequestLog fetches one log's full request/response bodies, kept out of
@@ -748,4 +774,6 @@ type Bootstrap struct {
 	// ChainModes maps a client model name to its chain starting rule. Absent
 	// means the default, "failover".
 	ChainModes map[string]string `json:"chainModes"`
+	// Plugins is the feature-plugin list (type / config / enabled / stats).
+	Plugins []plugin.Info `json:"plugins"`
 }

@@ -25,7 +25,7 @@ func TestListRequestLogsPaginatesNewestFirst(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page, err := tracker.ListRequestLogs(2, 2, RequestLogFilter{})
+	page, err := tracker.ListRequestLogs(2, 2, RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestListRequestLogsFiltersSavedNames(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page, err := tracker.ListRequestLogs(1, 20, RequestLogFilter{Token: "生产", Model: "reason", Provider: "深度"})
+	page, err := tracker.ListRequestLogs(1, 20, RequestLogFilter{Token: "生产", Model: "reason", Provider: "深度"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestListRequestLogsStatsFollowFilter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page, err := tracker.ListRequestLogs(1, 20, RequestLogFilter{Provider: "openai"})
+	page, err := tracker.ListRequestLogs(1, 20, RequestLogFilter{Provider: "openai"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,6 +88,82 @@ func TestListRequestLogsStatsFollowFilter(t *testing.T) {
 	}
 	if len(page.Items) != 2 {
 		t.Fatalf("items should still be the filtered page: %+v", page.Items)
+	}
+}
+
+// 费用必须和 token 统计一样跟随过滤条件，且按「路由」计价再上卷：
+// deepseek 的账单不能混进 openai 过滤结果。
+func TestListRequestLogsCostsFollowFilter(t *testing.T) {
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "agent-router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tracker := NewSQLiteTracker(db)
+	for _, event := range []Event{
+		// openai/chat: 入 $10/M、出 $20/M、缓存 $1/M
+		// uncached=20, out=5, cache=80 → 20*10 + 5*20 + 80*1
+		{ProviderID: "openai", ClientModel: "chat", InputTokens: 100, OutputTokens: 5, CachedInputTokens: 80, Success: true},
+		// deepseek/reasoner: 入 $1/M、出 $2/M、缓存 $0.5/M → 不应计入 openai 过滤
+		{ProviderID: "deepseek", ClientModel: "reasoner", InputTokens: 7, OutputTokens: 3, CachedInputTokens: 2, Success: true},
+	} {
+		if err := tracker.Record(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	price := func(providerID, _ string) (input, output, cacheRead float64) {
+		switch providerID {
+		case "openai":
+			return 10, 20, 1
+		case "deepseek":
+			return 1, 2, 0.5
+		}
+		return 0, 0, 0
+	}
+	page, err := tracker.ListRequestLogs(1, 20, RequestLogFilter{Provider: "openai"}, price)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const eps = 1e-12
+	wantIn := float64(20*10) / 1e6
+	wantOut := float64(5*20) / 1e6
+	wantCache := float64(80*1) / 1e6
+	stats := page.Stats
+	if stats.Requests != 1 || stats.InputTokens != 100 {
+		t.Fatalf("filtered stats should exclude deepseek: %+v", stats)
+	}
+	if d := stats.InputCost - wantIn; d > eps || d < -eps {
+		t.Fatalf("input cost = %v, want %v", stats.InputCost, wantIn)
+	}
+	if d := stats.OutputCost - wantOut; d > eps || d < -eps {
+		t.Fatalf("output cost = %v, want %v", stats.OutputCost, wantOut)
+	}
+	if d := stats.CacheCost - wantCache; d > eps || d < -eps {
+		t.Fatalf("cache cost = %v, want %v", stats.CacheCost, wantCache)
+	}
+	if d := stats.TotalCost - (wantIn + wantOut + wantCache); d > eps || d < -eps {
+		t.Fatalf("total cost = %v, want %v", stats.TotalCost, wantIn+wantOut+wantCache)
+	}
+}
+
+// 日志统计与使用情况页一样跑在带 body 的 request_logs 上。GROUP BY 路由
+// 一旦退化成裸扫，过滤查询会把溢出页全读一遍。
+func TestListRequestLogsStatsAvoidsFullTableScan(t *testing.T) {
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "agent-router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tracker := NewSQLiteTracker(db)
+	if err := tracker.Record(Event{TokenID: "key-a", TokenName: "甲", ProviderID: "openai", ClientModel: "chat", Success: true, RequestBody: strings.Repeat("x", 4096)}); err != nil {
+		t.Fatal(err)
+	}
+	query := `SELECT provider_id,client_model,COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM request_logs GROUP BY provider_id,client_model`
+	plan := explainPlan(t, db, query)
+	if !strings.Contains(plan, "COVERING INDEX") {
+		t.Errorf("request log stats aggregation does not use a covering index: %s", plan)
+	} else {
+		t.Logf("stats: %s", strings.TrimSpace(plan))
 	}
 }
 
@@ -294,7 +370,7 @@ func TestListRequestLogsFiltersStatus(t *testing.T) {
 		status string
 		want   int
 	}{{"failed", 1}, {"success", 1}, {"", 2}} {
-		page, err := tracker.ListRequestLogs(1, 20, RequestLogFilter{Status: tc.status})
+		page, err := tracker.ListRequestLogs(1, 20, RequestLogFilter{Status: tc.status}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

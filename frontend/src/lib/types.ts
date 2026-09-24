@@ -70,7 +70,7 @@ export type ModelMapping = {
   inputTypes: string[];
   inputContextSize: number;
   outputSize: number;
-  // 单价仅配置与展示，单位 USD / 百万 tokens，默认 0（未设置）；网关不据此计费。
+  // 单价仅配置与展示，单位为每百万 tokens，默认 0（未设置）；网关不据此计费。
   inputPrice: number;
   outputPrice: number;
   cacheReadPrice: number;
@@ -154,7 +154,8 @@ export type UsageStat = {
   outputTokens: number;
   cachedInputTokens: number;
   reasoningOutputTokens: number;
-  // USD costs from mapping unit prices (per 1M tokens). inputCost excludes
+  // Costs from mapping unit prices (per 1M tokens); currency is whatever the
+  // operator configured — UI does not force a symbol. inputCost excludes
   // cached tokens; cacheCost bills them at cacheReadPrice; total = the three.
   inputCost: number;
   outputCost: number;
@@ -191,6 +192,20 @@ export type RequestLog = {
   credentialId: string;
   credentialName: string;
   credentialMask: string;
+  // 本条请求的输入插件压缩差异（估算 token）。pluginId 为空表示未跑插件。
+  // pluginDeltas 列出本次请求里所有生效插件（可多条）；单数字段保留给旧数据。
+  pluginId: string;
+  pluginBeforeTokens: number;
+  pluginAfterTokens: number;
+  pluginSavedTokens: number;
+  pluginDeltas: PluginDelta[];
+};
+// 单请求内单个插件的 before/after/saved（估算 token）。
+export type PluginDelta = {
+  pluginId: string;
+  before: number;
+  after: number;
+  saved: number;
 };
 export type RequestLogPage = {
   items: RequestLog[];
@@ -207,6 +222,12 @@ export type RequestLogStats = {
   outputTokens: number;
   cachedInputTokens: number;
   reasoningOutputTokens: number;
+  // Costs from mapping unit prices (per 1M tokens), scoped to the current
+  // filter. Same split as UsageStat: inputCost excludes cached tokens.
+  inputCost: number;
+  outputCost: number;
+  cacheCost: number;
+  totalCost: number;
 };
 export type RequestLogFilter = {
   token: string;
@@ -226,6 +247,34 @@ export type Bootstrap = {
   settings: AppSettings;
   // 同名链的起点策略，按客户端模型名索引。缺省即 "failover"。
   chainModes: Record<string, ChainMode>;
+  plugins: PluginInfo[];
+};
+
+// 功能插件：kind 为 input/output；hasConfig 表示是否有可编辑配置。
+// inputTokens/outputTokens 是插件启用期间的累计估算，savedTokens = 输入−压缩后
+// （累计差异值），compressionRate = 1 - output/input（0 表示尚无数据）。
+// config 为扁平设置（如 caveman 的 level）。
+// response* = 插件生效时的上游输出 token 观测；baseline* = 未生效时的对照；
+// outputSavingsRate = 1 - 均值(生效)/均值(对照)，双方都有样本且对照更高时才 >0。
+export type PluginInfo = {
+  id: string;
+  name: string;
+  description: string;
+  kind: "input" | "output";
+  hasConfig: boolean;
+  enabled: boolean;
+  config: Record<string, string>;
+  inputTokens: number;
+  outputTokens: number;
+  savedTokens: number;
+  compressionRate: number;
+  responseTokens: number;
+  responseCount: number;
+  baselineTokens: number;
+  baselineCount: number;
+  responseAvg: number;
+  baselineAvg: number;
+  outputSavingsRate: number;
 };
 
 // failover：永远从链首开始，健康就短路。round_robin：每次请求把起点向后挪

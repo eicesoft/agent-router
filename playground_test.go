@@ -103,7 +103,7 @@ func newTestApp(t *testing.T, upstream http.Handler) (*App, *[]PlaygroundChunk) 
 	app := &App{ctx: context.Background(), db: db, providers: registry,
 		mappings: mappings, keys: keys, settings: prefs,
 		secrets: secrets, usage: usage.NewSQLiteTracker(db), credentials: credentials}
-	app.proxy = proxy.New(registry, mappings, app.credentials, app.usage, keys)
+	app.proxy = proxy.New(registry, mappings, app.credentials, app.usage, keys, nil)
 	app.gatewayAddr = freeAddr(t)
 	if err := app.proxy.Start(app.gatewayAddr); err != nil {
 		t.Fatal(err)
@@ -309,7 +309,7 @@ func TestPlaygroundChatRoutesAliasThroughGateway(t *testing.T) {
 	// 客户端读到 [DONE] 就返回，可能比网关自己写日志早一瞬，因此轮询。
 	var logged []usage.RequestLog
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
-		page, err := app.usage.ListRequestLogs(1, 20, usage.RequestLogFilter{})
+		page, err := app.usage.ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

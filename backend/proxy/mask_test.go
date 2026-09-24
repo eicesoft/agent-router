@@ -47,7 +47,7 @@ func TestE2EMaskEndToEnd(t *testing.T) {
 	if _, err := pool.Add("test", "主账号", key); err != nil {
 		t.Fatal(err)
 	}
-	server := New(registry, mappings, pool, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	server := New(registry, mappings, pool, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"client-model","messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer ar-local")
@@ -57,7 +57,7 @@ func TestE2EMaskEndToEnd(t *testing.T) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 
-	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

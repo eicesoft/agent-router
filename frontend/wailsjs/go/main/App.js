@@ -66,6 +66,10 @@ export function ListDevProviders() {
   return window['go']['main']['App']['ListDevProviders']();
 }
 
+export function ListPlugins() {
+  return window['go']['main']['App']['ListPlugins']();
+}
+
 export function ListProviderCredentials(arg1) {
   return window['go']['main']['App']['ListProviderCredentials'](arg1);
 }
@@ -142,6 +146,10 @@ export function SetChainMode(arg1, arg2) {
   return window['go']['main']['App']['SetChainMode'](arg1, arg2);
 }
 
+export function SetPluginConfig(arg1, arg2) {
+  return window['go']['main']['App']['SetPluginConfig'](arg1, arg2);
+}
+
 export function SetProviderAPIKey(arg1, arg2) {
   return window['go']['main']['App']['SetProviderAPIKey'](arg1, arg2);
 }
@@ -164,6 +172,10 @@ export function Startup(arg1) {
 
 export function ToggleLocalAPIKey(arg1, arg2) {
   return window['go']['main']['App']['ToggleLocalAPIKey'](arg1, arg2);
+}
+
+export function TogglePlugin(arg1, arg2) {
+  return window['go']['main']['App']['TogglePlugin'](arg1, arg2);
 }
 
 export function ToggleProvider(arg1, arg2) {

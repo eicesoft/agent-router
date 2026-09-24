@@ -54,7 +54,7 @@ func pooledTestServer(t *testing.T, upstream *httptest.Server, keys map[string]s
 	if err := registry.SetCredentialMode("test", string(credential.ModeRoundRobin)); err != nil {
 		t.Fatal(err)
 	}
-	return New(registry, mappings, pool, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"}), pool
+	return New(registry, mappings, pool, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"}, nil), pool
 }
 
 // A rejected key must be retried on another key within the same request, and the
@@ -296,7 +296,7 @@ func TestPassthroughUsesPoolAndLogsCredential(t *testing.T) {
 	if _, err := pool.Add("test", "key-a", "sk-a"); err != nil {
 		t.Fatal(err)
 	}
-	server := New(registry, mappings, pool, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	server := New(registry, mappings, pool, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"}, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"client-model","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("x-api-key", "ar-local")
@@ -306,7 +306,7 @@ func TestPassthroughUsesPoolAndLogsCredential(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
-	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

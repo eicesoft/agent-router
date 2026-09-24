@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   PanelLeftClose,
   PanelLeftOpen,
+  Puzzle,
   ScrollText,
   Settings2,
   SlidersHorizontal,
@@ -20,6 +21,7 @@ export type Page =
   | "keys"
   | "mappings"
   | "agents"
+  | "plugins"
   | "skills"
   | "playground"
   | "logs"
@@ -30,6 +32,7 @@ const items = [
   ["keys", "本地密钥", KeyRound],
   ["mappings", "模型映射", SlidersHorizontal],
   ["agents", "Agent", Bot],
+  ["plugins", "功能插件", Puzzle],
   ["skills", "Skills", SquareTerminal],
   ["playground", "演练场", FlaskConical],
 ] as const;

@@ -656,6 +656,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	routes = chat
 
 	chatRequest, plan, droppedTools := input.toChat()
+	chatRequest, pluginDeltas := s.applyInputChat(chatRequest)
 	clientModel := input.Model
 	session := responsesSession(r, input)
 
@@ -663,6 +664,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	// 日志记最终应答的那条路由，failover 后回填。
 	route := routes[0]
 	logEvent := func(success bool, responseBody, errorMessage string, tokens tokenUsage) {
+		s.recordPluginOutputStats(pluginDeltas, tokens.Output, success)
 		_ = s.usage.Record(usage.Event{
 			TokenID: tokenID, TokenName: tokenName, ProviderID: route.provider.ID, ProviderName: route.provider.Name,
 			ClientModel: route.mapping.ClientModel, UpstreamModel: route.mapping.UpstreamModel,
@@ -673,6 +675,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			Success:   success,
 			LatencyMS: int(time.Since(started).Milliseconds()), ErrorMessage: errorMessage,
 			CredentialID: served.id, CredentialName: served.name, CredentialMask: served.mask,
+			PluginDeltas: pluginLogDeltas(pluginDeltas),
 		})
 	}
 	// 被丢弃的 hosted 工具记进日志文本，便于排查「模型为什么没去搜索」。成功时

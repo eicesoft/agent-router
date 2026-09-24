@@ -121,7 +121,7 @@ func TestStreamingCompletionOutlivesHeaderTimeout(t *testing.T) {
 	if !strings.Contains(body, `"finish_reason":"stop"`) || !strings.Contains(body, "[DONE]") {
 		t.Fatalf("stream was truncated before its terminal event: %s", body)
 	}
-	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

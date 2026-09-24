@@ -5401,3 +5401,145 @@ html.dark .skills-add {
   color: var(--muted-2);
   margin-left: 8px;
 }
+
+/* 功能插件页：工具提示 + 插件卡片（类型/配置/开关/三项统计）。 */
+.plugins-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 8px;
+}
+.plugins-toolbar-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted-4);
+  font-size: 12px;
+  line-height: 1.5;
+}
+/* 恒定三列：每张卡片等宽，一行固定放 3 个插件面板。 */
+.plugins-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.plugins-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  box-sizing: border-box;
+}
+.plugins-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.plugins-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.plugins-config-btn {
+  margin: 0 !important;
+  padding: 0 !important;
+  min-width: 24px;
+  width: 24px;
+  height: 24px;
+}
+.plugins-card-head [data-slot="switch"] {
+  flex-shrink: 0;
+}
+.plugins-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-heading);
+}
+.plugins-card-desc {
+  margin: 0;
+  color: var(--muted-2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.plugins-card-config {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--well-bg);
+  border: 1px solid var(--card-border);
+}
+.plugins-config-current {
+  font-size: 11px;
+  color: var(--muted-3);
+}
+.plugins-stats-output {
+  padding-top: 0;
+}
+.plugins-stats-output .plugins-stat {
+  background: transparent;
+  border: 1px dashed var(--card-border);
+  padding: 6px 8px;
+}
+.plugins-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 4px;
+}
+.plugins-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--well-bg);
+}
+.plugins-stat-label {
+  font-size: 11px;
+  color: var(--muted-3);
+}
+.plugins-stat-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-body);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 请求日志 Tokens 格：差异值紧跟 token 同一行，不换行。 */
+.request-log-tokens-cell {
+  white-space: nowrap;
+}
+.request-log-tokens-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+  text-decoration: underline dotted var(--dots-underline);
+  text-underline-offset: 3px;
+}
+.request-log-plugin-saved {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--success-ink);
+  background: var(--success-soft);
+  border: 1px solid var(--success-border);
+  border-radius: 999px;
+  padding: 0 6px;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+.request-log-plugin-savings {
+  margin-top: 4px;
+  color: var(--success-ink);
+}

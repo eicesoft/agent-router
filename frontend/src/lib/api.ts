@@ -16,6 +16,7 @@ import type {
   Skill,
   SkillDetail,
   SkillSummary,
+  PluginInfo,
   ToolPreview,
   ToolSkillLinks,
   UsageBreakdown,
@@ -107,10 +108,82 @@ const demo: Bootstrap = {
   proxyRunning: true,
   settings: { host: "127.0.0.1", port: 9400, theme: "light" },
   chainModes: {},
+  plugins: [
+    {
+      id: "session_strip",
+      name: "会话去重",
+      description:
+        "跨轮次去除同一请求中先前已出现的文本区块；无损——只省略重复，不摘要、不丢弃新内容。",
+      kind: "input",
+      hasConfig: false,
+      enabled: false,
+      config: {},
+      inputTokens: 0,
+      outputTokens: 0,
+      savedTokens: 0,
+      compressionRate: 0,
+      responseTokens: 0,
+      responseCount: 0,
+      baselineTokens: 0,
+      baselineCount: 0,
+      responseAvg: 0,
+      baselineAvg: 0,
+      outputSavingsRate: 0,
+    },
+    {
+      id: "caveman",
+      name: "Caveman",
+      description:
+        "按级别压缩长工具结果/日志/JSON，并注入风格规则；规则内嵌免安装。含输入净节省与输出均值对比。",
+      kind: "input",
+      hasConfig: true,
+      enabled: false,
+      config: { level: "full" },
+      inputTokens: 0,
+      outputTokens: 0,
+      savedTokens: 0,
+      compressionRate: 0,
+      responseTokens: 0,
+      responseCount: 0,
+      baselineTokens: 0,
+      baselineCount: 0,
+      responseAvg: 0,
+      baselineAvg: 0,
+      outputSavingsRate: 0,
+    },
+  ],
 };
 export async function bootstrap(): Promise<Bootstrap> {
   const app = (window as any).go?.main?.App;
   return app ? app.GetBootstrap() : demo;
+}
+export async function listPlugins(): Promise<PluginInfo[]> {
+  const app = (window as any).go?.main?.App;
+  return app ? app.ListPlugins() : demo.plugins;
+}
+export async function togglePlugin(
+  id: string,
+  enabled: boolean,
+): Promise<PluginInfo[]> {
+  const app = (window as any).go?.main?.App;
+  if (!app) {
+    return demo.plugins.map((p) => (p.id === id ? { ...p, enabled } : p));
+  }
+  await app.TogglePlugin(id, enabled);
+  return app.ListPlugins();
+}
+export async function setPluginConfig(
+  id: string,
+  config: Record<string, string>,
+): Promise<PluginInfo[]> {
+  const app = (window as any).go?.main?.App;
+  if (!app) {
+    return demo.plugins.map((p) =>
+      p.id === id ? { ...p, config: { ...p.config, ...config } } : p,
+    );
+  }
+  await app.SetPluginConfig(id, config);
+  return app.ListPlugins();
 }
 export async function setProxyRunning(enabled: boolean): Promise<void> {
   const app = (window as any).go?.main?.App;
@@ -348,6 +421,10 @@ export async function listRequestLogs(
         outputTokens: 0,
         cachedInputTokens: 0,
         reasoningOutputTokens: 0,
+        inputCost: 0,
+        outputCost: 0,
+        cacheCost: 0,
+        totalCost: 0,
       },
     };
   }

@@ -18,6 +18,7 @@ import (
 
 	"agent-router/backend/config"
 	"agent-router/backend/credential"
+	"agent-router/backend/plugin"
 	"agent-router/backend/provider"
 	"agent-router/backend/usage"
 )
@@ -30,6 +31,9 @@ type Server struct {
 	adapters    AdapterSet
 	usage       *usage.SQLiteTracker
 	client      *http.Client
+	// plugins holds enable flags + cumulative stats for feature plugins.
+	// Nil skips all plugin work (most unit tests).
+	plugins *plugin.Store
 
 	// stallTimeout is how long a streaming upstream body may stay silent
 	// before the gateway gives up on it; see upstreamStallTimeout.
@@ -109,9 +113,9 @@ func (s *stallCloser) Close() error {
 // New wires the gateway. Upstream keys are reached only through the credential
 // pool, so this server never holds a single key itself; the pool is the one
 // owner of which key serves a request.
-func New(registry *provider.Registry, mappings *config.MappingStore, credentials *credential.Pool, usageTracker *usage.SQLiteTracker, keys KeyVerifier) *Server {
+func New(registry *provider.Registry, mappings *config.MappingStore, credentials *credential.Pool, usageTracker *usage.SQLiteTracker, keys KeyVerifier, plugins *plugin.Store) *Server {
 	client := upstreamClient()
-	return &Server{registry: registry, mappings: mappings, credentials: credentials, keys: keys, adapters: NewAdapterSet(client), client: client, usage: usageTracker, stallTimeout: upstreamStallTimeout, chainCursor: map[string]int{}}
+	return &Server{registry: registry, mappings: mappings, credentials: credentials, keys: keys, adapters: NewAdapterSet(client), client: client, usage: usageTracker, plugins: plugins, stallTimeout: upstreamStallTimeout, chainCursor: map[string]int{}}
 }
 
 // stallGuarded wraps a streaming upstream body so silence is fatal instead of
@@ -426,6 +430,10 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Keep the client-facing request before replacing its model with the
 	// upstream name. The log deliberately never includes the provider API key.
 	requestBody, _ := json.Marshal(input)
+	// Input plugins rewrite messages after the log snapshot so request_logs
+	// still show what the client actually sent. pluginDeltas is the per-request
+	// compression 差异值 list recorded on the log row (one entry per plugin).
+	input, pluginDeltas := s.applyInputChat(input)
 	userAgent := r.Header.Get("User-Agent")
 	// 同一个客户端模型名可以挂多家提供商：按配置顺序尝试，前一家 429/401/5xx 就转下一家。
 	routes := s.resolveRoutes(input.Model)
@@ -440,6 +448,7 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	// 日志记的是最终应答的那条路由，解析完成前先用链首占位。
 	route := routes[0]
 	logEvent := func(success bool, responseBody, errorMessage string, tokens tokenUsage) {
+		s.recordPluginOutputStats(pluginDeltas, tokens.Output, success)
 		_ = s.usage.Record(usage.Event{
 			TokenID: tokenID, TokenName: tokenName, ProviderID: route.provider.ID, ProviderName: route.provider.Name,
 			ClientModel: route.mapping.ClientModel, UpstreamModel: route.mapping.UpstreamModel,
@@ -450,6 +459,7 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 			Success:   success,
 			LatencyMS: int(time.Since(started).Milliseconds()), ErrorMessage: errorMessage,
 			CredentialID: served.id, CredentialName: served.name, CredentialMask: served.mask,
+			PluginDeltas: pluginLogDeltas(pluginDeltas),
 		})
 	}
 	response, lease, servedRoute, err := s.withRoute(r.Context(), routes, session, func(target routeTarget, key string) (*http.Response, error) {
@@ -581,11 +591,13 @@ func (s *Server) messagesHandler(w http.ResponseWriter, r *http.Request) {
 	// so the conversation head is built from it plus the first user turn.
 	session := sessionIdentity(r, extractAnthropicSystem(input.System), firstAnthropicMessageText(input.Messages, "user"))
 	requestBody, _ := json.Marshal(input)
+	input, pluginDeltas := s.applyInputAnthropic(input)
 
 	var served requestCredential
 	// 日志记最终应答的那条路由；下游 handler 在 failover 之后回填。
 	route := routes[0]
 	logEvent := func(success bool, responseBody, errorMessage string, tokens tokenUsage) {
+		s.recordPluginOutputStats(pluginDeltas, tokens.Output, success)
 		_ = s.usage.Record(usage.Event{
 			TokenID: tokenID, TokenName: tokenName, ProviderID: route.provider.ID, ProviderName: route.provider.Name,
 			ClientModel: route.mapping.ClientModel, UpstreamModel: route.mapping.UpstreamModel,
@@ -596,6 +608,7 @@ func (s *Server) messagesHandler(w http.ResponseWriter, r *http.Request) {
 			Success:   success,
 			LatencyMS: int(time.Since(started).Milliseconds()), ErrorMessage: errorMessage,
 			CredentialID: served.id, CredentialName: served.name, CredentialMask: served.mask,
+			PluginDeltas: pluginLogDeltas(pluginDeltas),
 		})
 	}
 

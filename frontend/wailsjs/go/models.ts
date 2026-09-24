@@ -168,6 +168,7 @@ export namespace main {
 	    proxyRunning: boolean;
 	    settings: settings.Settings;
 	    chainModes: Record<string, string>;
+	    plugins: plugin.Info[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Bootstrap(source);
@@ -183,6 +184,7 @@ export namespace main {
 	        this.proxyRunning = source["proxyRunning"];
 	        this.settings = this.convertValues(source["settings"], settings.Settings);
 	        this.chainModes = source["chainModes"];
+	        this.plugins = this.convertValues(source["plugins"], plugin.Info);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -282,6 +284,57 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace plugin {
+	
+	export class Info {
+	    id: string;
+	    name: string;
+	    description: string;
+	    kind: string;
+	    hasConfig: boolean;
+	    enabled: boolean;
+	    config: Record<string, string>;
+	    inputTokens: number;
+	    outputTokens: number;
+	    savedTokens: number;
+	    compressionRate: number;
+	    responseTokens: number;
+	    responseCount: number;
+	    baselineTokens: number;
+	    baselineCount: number;
+	    responseAvg: number;
+	    baselineAvg: number;
+	    outputSavingsRate: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Info(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.kind = source["kind"];
+	        this.hasConfig = source["hasConfig"];
+	        this.enabled = source["enabled"];
+	        this.config = source["config"];
+	        this.inputTokens = source["inputTokens"];
+	        this.outputTokens = source["outputTokens"];
+	        this.savedTokens = source["savedTokens"];
+	        this.compressionRate = source["compressionRate"];
+	        this.responseTokens = source["responseTokens"];
+	        this.responseCount = source["responseCount"];
+	        this.baselineTokens = source["baselineTokens"];
+	        this.baselineCount = source["baselineCount"];
+	        this.responseAvg = source["responseAvg"];
+	        this.baselineAvg = source["baselineAvg"];
+	        this.outputSavingsRate = source["outputSavingsRate"];
+	    }
 	}
 
 }
@@ -837,6 +890,24 @@ export namespace usage {
 		    return a;
 		}
 	}
+	export class PluginDelta {
+	    pluginId: string;
+	    before: number;
+	    after: number;
+	    saved: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new PluginDelta(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.pluginId = source["pluginId"];
+	        this.before = source["before"];
+	        this.after = source["after"];
+	        this.saved = source["saved"];
+	    }
+	}
 	export class RequestLog {
 	    id: number;
 	    createdAt: string;
@@ -859,6 +930,11 @@ export namespace usage {
 	    credentialId: string;
 	    credentialName: string;
 	    credentialMask: string;
+	    pluginId: string;
+	    pluginBeforeTokens: number;
+	    pluginAfterTokens: number;
+	    pluginSavedTokens: number;
+	    pluginDeltas: PluginDelta[];
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestLog(source);
@@ -887,7 +963,30 @@ export namespace usage {
 	        this.credentialId = source["credentialId"];
 	        this.credentialName = source["credentialName"];
 	        this.credentialMask = source["credentialMask"];
+	        this.pluginId = source["pluginId"];
+	        this.pluginBeforeTokens = source["pluginBeforeTokens"];
+	        this.pluginAfterTokens = source["pluginAfterTokens"];
+	        this.pluginSavedTokens = source["pluginSavedTokens"];
+	        this.pluginDeltas = this.convertValues(source["pluginDeltas"], PluginDelta);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class RequestLogFilter {
 	    token: string;
@@ -918,6 +1017,10 @@ export namespace usage {
 	    outputTokens: number;
 	    cachedInputTokens: number;
 	    reasoningOutputTokens: number;
+	    inputCost: number;
+	    outputCost: number;
+	    cacheCost: number;
+	    totalCost: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new RequestLogStats(source);
@@ -931,6 +1034,10 @@ export namespace usage {
 	        this.outputTokens = source["outputTokens"];
 	        this.cachedInputTokens = source["cachedInputTokens"];
 	        this.reasoningOutputTokens = source["reasoningOutputTokens"];
+	        this.inputCost = source["inputCost"];
+	        this.outputCost = source["outputCost"];
+	        this.cacheCost = source["cacheCost"];
+	        this.totalCost = source["totalCost"];
 	    }
 	}
 	export class RequestLogPage {

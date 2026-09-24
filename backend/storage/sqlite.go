@@ -167,6 +167,13 @@ CREATE INDEX IF NOT EXISTS idx_provider_credentials_provider ON provider_credent
 		{"model_mappings", "input_price", "REAL NOT NULL DEFAULT 0"},
 		{"model_mappings", "output_price", "REAL NOT NULL DEFAULT 0"},
 		{"model_mappings", "cache_read_price", "REAL NOT NULL DEFAULT 0"},
+		// 输入插件对本条请求的压缩差异（估算 token）。plugin_id 为空表示未跑插件。
+		// plugin_deltas_json 记录同一次请求里所有生效插件的 before/after/saved。
+		{"request_logs", "plugin_id", "TEXT NOT NULL DEFAULT ''"},
+		{"request_logs", "plugin_before_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"request_logs", "plugin_after_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"request_logs", "plugin_saved_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"request_logs", "plugin_deltas_json", "TEXT NOT NULL DEFAULT '[]'"},
 	} {
 		var exists int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, column.table, column.name).Scan(&exists); err != nil {

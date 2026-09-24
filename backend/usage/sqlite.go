@@ -2,6 +2,7 @@ package usage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -32,6 +33,23 @@ type Event struct {
 	CredentialID   string
 	CredentialName string
 	CredentialMask string
+	// Input-plugin compression for this request (plugin.Delta). Zero when no
+	// input plugin ran. Saved = Before - After (estimated tokens removed).
+	// PluginDeltas carries every plugin that ran; the four scalar fields keep
+	// the first (or first saving) delta for older readers and tests.
+	PluginID           string
+	PluginBeforeTokens int64
+	PluginAfterTokens  int64
+	PluginSavedTokens  int64
+	PluginDeltas       []PluginDelta
+}
+
+// PluginDelta is one plugin's before/after estimate on a single request.
+type PluginDelta struct {
+	PluginID string `json:"pluginId"`
+	Before   int64  `json:"before"`
+	After    int64  `json:"after"`
+	Saved    int64  `json:"saved"`
 }
 
 // RequestLog is a single proxied request. RequestBody and ResponseBody are the
@@ -59,6 +77,14 @@ type RequestLog struct {
 	CredentialID          string `json:"credentialId"`
 	CredentialName        string `json:"credentialName"`
 	CredentialMask        string `json:"credentialMask"`
+	// Per-request input-plugin compression. PluginSavedTokens is the 差异值
+	// (输入估算 − 压缩后估算); empty PluginID means no input plugin ran.
+	// PluginDeltas lists every plugin that ran on this request (multi-plugin).
+	PluginID           string        `json:"pluginId"`
+	PluginBeforeTokens int64         `json:"pluginBeforeTokens"`
+	PluginAfterTokens  int64         `json:"pluginAfterTokens"`
+	PluginSavedTokens  int64         `json:"pluginSavedTokens"`
+	PluginDeltas       []PluginDelta `json:"pluginDeltas"`
 }
 
 type Breakdown struct {
@@ -79,14 +105,20 @@ type RequestLogPage struct {
 
 // RequestLogStats aggregates the rows matching the current filter, so the log
 // panel can show token totals for exactly what is being searched rather than
-// the whole history.
+// the whole history. Costs use the same per-route pricing as the usage panel
+// (see cost.go): summed after grouping by provider_id/client_model so a
+// failover chain with different unit prices is not billed at one route's rate.
 type RequestLogStats struct {
-	Requests              int `json:"requests"`
-	Successes             int `json:"successes"`
-	InputTokens           int `json:"inputTokens"`
-	OutputTokens          int `json:"outputTokens"`
-	CachedInputTokens     int `json:"cachedInputTokens"`
-	ReasoningOutputTokens int `json:"reasoningOutputTokens"`
+	Requests              int     `json:"requests"`
+	Successes             int     `json:"successes"`
+	InputTokens           int     `json:"inputTokens"`
+	OutputTokens          int     `json:"outputTokens"`
+	CachedInputTokens     int     `json:"cachedInputTokens"`
+	ReasoningOutputTokens int     `json:"reasoningOutputTokens"`
+	InputCost             float64 `json:"inputCost"`
+	OutputCost            float64 `json:"outputCost"`
+	CacheCost             float64 `json:"cacheCost"`
+	TotalCost             float64 `json:"totalCost"`
 }
 
 // RequestLogFilter searches the current request history by its saved display
@@ -114,6 +146,23 @@ const previewLimit = "50"
 
 func NewSQLiteTracker(db *sql.DB) *SQLiteTracker { return &SQLiteTracker{db: db} }
 func (t *SQLiteTracker) Record(event Event) error {
+	// Prefer multi-plugin deltas; keep legacy scalar columns in sync so older
+	// readers (and the first-saving plugin) still see a value.
+	if len(event.PluginDeltas) > 0 {
+		event.PluginID = event.PluginDeltas[0].PluginID
+		event.PluginBeforeTokens = event.PluginDeltas[0].Before
+		event.PluginAfterTokens = event.PluginDeltas[0].After
+		event.PluginSavedTokens = event.PluginDeltas[0].Saved
+		for _, d := range event.PluginDeltas {
+			if d.Saved > 0 {
+				event.PluginID = d.PluginID
+				event.PluginBeforeTokens = d.Before
+				event.PluginAfterTokens = d.After
+				event.PluginSavedTokens = d.Saved
+				break
+			}
+		}
+	}
 	createdAt := time.Now().UTC().Format(time.RFC3339)
 	tx, err := t.db.Begin()
 	if err != nil {
@@ -123,26 +172,66 @@ func (t *SQLiteTracker) Record(event Event) error {
 	if _, err := tx.Exec(`INSERT INTO usage_events(created_at,provider_id,model,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message) VALUES(?,?,?,?,?,?,?,?,?,?)`, createdAt, event.ProviderID, event.ClientModel, event.InputTokens, event.OutputTokens, event.CachedInputTokens, event.ReasoningOutputTokens, event.Success, event.LatencyMS, event.ErrorMessage); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO request_logs(created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,request_body,response_body,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message,credential_id,credential_name,credential_mask) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, createdAt, event.TokenID, event.TokenName, event.ProviderID, event.ProviderName, event.ClientModel, event.UpstreamModel, event.UserAgent, event.RequestBody, event.ResponseBody, event.InputTokens, event.OutputTokens, event.CachedInputTokens, event.ReasoningOutputTokens, event.Success, event.LatencyMS, event.ErrorMessage, event.CredentialID, event.CredentialName, event.CredentialMask); err != nil {
+	if _, err := tx.Exec(`INSERT INTO request_logs(created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,request_body,response_body,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message,credential_id,credential_name,credential_mask,plugin_id,plugin_before_tokens,plugin_after_tokens,plugin_saved_tokens,plugin_deltas_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, createdAt, event.TokenID, event.TokenName, event.ProviderID, event.ProviderName, event.ClientModel, event.UpstreamModel, event.UserAgent, event.RequestBody, event.ResponseBody, event.InputTokens, event.OutputTokens, event.CachedInputTokens, event.ReasoningOutputTokens, event.Success, event.LatencyMS, event.ErrorMessage, event.CredentialID, event.CredentialName, event.CredentialMask, event.PluginID, event.PluginBeforeTokens, event.PluginAfterTokens, event.PluginSavedTokens, encodePluginDeltas(event.PluginDeltas, event)); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// encodePluginDeltas serializes the multi-plugin list. When the caller only
+// filled the legacy scalar fields, synthesize a single-element array so new
+// readers always have JSON to parse.
+func encodePluginDeltas(deltas []PluginDelta, event Event) string {
+	if len(deltas) == 0 && event.PluginID != "" {
+		deltas = []PluginDelta{{
+			PluginID: event.PluginID,
+			Before:   event.PluginBeforeTokens,
+			After:    event.PluginAfterTokens,
+			Saved:    event.PluginSavedTokens,
+		}}
+	}
+	if len(deltas) == 0 {
+		return "[]"
+	}
+	encoded, err := json.Marshal(deltas)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func decodePluginDeltas(raw string, item *RequestLog) {
+	item.PluginDeltas = nil
+	if raw != "" && raw != "[]" {
+		_ = json.Unmarshal([]byte(raw), &item.PluginDeltas)
+	}
+	if len(item.PluginDeltas) == 0 && item.PluginID != "" {
+		item.PluginDeltas = []PluginDelta{{
+			PluginID: item.PluginID,
+			Before:   item.PluginBeforeTokens,
+			After:    item.PluginAfterTokens,
+			Saved:    item.PluginSavedTokens,
+		}}
+	}
 }
 
 // GetRequestLog returns a single log with full request/response bodies for the
 // detail view, which are truncated in listings to keep IPC messages small.
 func (t *SQLiteTracker) GetRequestLog(id int64) (RequestLog, error) {
 	var item RequestLog
-	err := t.db.QueryRow(`SELECT id,created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,request_body,response_body,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message,credential_id,credential_name,credential_mask FROM request_logs WHERE id = ?`, id).
-		Scan(&item.ID, &item.CreatedAt, &item.TokenID, &item.TokenName, &item.ProviderID, &item.ProviderName, &item.ClientModel, &item.UpstreamModel, &item.UserAgent, &item.RequestBody, &item.ResponseBody, &item.InputTokens, &item.OutputTokens, &item.CachedInputTokens, &item.ReasoningOutputTokens, &item.Success, &item.LatencyMS, &item.ErrorMessage, &item.CredentialID, &item.CredentialName, &item.CredentialMask)
+	var deltasJSON string
+	err := t.db.QueryRow(`SELECT id,created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,request_body,response_body,input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message,credential_id,credential_name,credential_mask,plugin_id,plugin_before_tokens,plugin_after_tokens,plugin_saved_tokens,plugin_deltas_json FROM request_logs WHERE id = ?`, id).
+		Scan(&item.ID, &item.CreatedAt, &item.TokenID, &item.TokenName, &item.ProviderID, &item.ProviderName, &item.ClientModel, &item.UpstreamModel, &item.UserAgent, &item.RequestBody, &item.ResponseBody, &item.InputTokens, &item.OutputTokens, &item.CachedInputTokens, &item.ReasoningOutputTokens, &item.Success, &item.LatencyMS, &item.ErrorMessage, &item.CredentialID, &item.CredentialName, &item.CredentialMask, &item.PluginID, &item.PluginBeforeTokens, &item.PluginAfterTokens, &item.PluginSavedTokens, &deltasJSON)
 	if err != nil {
 		return RequestLog{}, err
 	}
+	decodePluginDeltas(deltasJSON, &item)
 	return item, nil
 }
 
 // ListRequestLogs returns the newest records first. Page numbers start at 1.
-func (t *SQLiteTracker) ListRequestLogs(page, pageSize int, filter RequestLogFilter) (RequestLogPage, error) {
+// price prices the filtered stats by route; nil leaves costs at $0.
+func (t *SQLiteTracker) ListRequestLogs(page, pageSize int, filter RequestLogFilter, price PriceFunc) (RequestLogPage, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -154,26 +243,51 @@ func (t *SQLiteTracker) ListRequestLogs(page, pageSize int, filter RequestLogFil
 	}
 	result := RequestLogPage{Items: []RequestLog{}, Page: page, PageSize: pageSize}
 	where, args := requestLogFilterClause(filter)
-	if err := t.db.QueryRow(`SELECT COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM request_logs`+where, args...).
-		Scan(&result.Total, &result.Stats.Successes, &result.Stats.InputTokens, &result.Stats.OutputTokens, &result.Stats.CachedInputTokens, &result.Stats.ReasoningOutputTokens); err != nil {
+	// One route-granularity pass supplies both the panel totals and the costs:
+	// summing tokens first and then pricing would bill a multi-provider
+	// failover chain at whichever route's unit price happens to win.
+	statsRows, err := t.db.Query(`SELECT provider_id,client_model,COUNT(*),COALESCE(SUM(success),0),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0) FROM request_logs`+where+` GROUP BY provider_id,client_model`, args...)
+	if err != nil {
 		return result, fmt.Errorf("count request logs: %w", err)
 	}
-	result.Stats.Requests = result.Total
+	for statsRows.Next() {
+		var providerID, clientModel string
+		var requests, successes, input, output, cached, reasoning int
+		if err := statsRows.Scan(&providerID, &clientModel, &requests, &successes, &input, &output, &cached, &reasoning); err != nil {
+			statsRows.Close()
+			return result, fmt.Errorf("scan request log stats: %w", err)
+		}
+		result.Total += requests
+		result.Stats.Requests += requests
+		result.Stats.Successes += successes
+		result.Stats.InputTokens += input
+		result.Stats.OutputTokens += output
+		result.Stats.CachedInputTokens += cached
+		result.Stats.ReasoningOutputTokens += reasoning
+		addToCost(&result.Stats, price, providerID, clientModel, input, output, cached)
+	}
+	if err := statsRows.Err(); err != nil {
+		statsRows.Close()
+		return result, fmt.Errorf("iterate request log stats: %w", err)
+	}
+	statsRows.Close()
 	result.TotalPages = (result.Total + pageSize - 1) / pageSize
 	queryArgs := append(args, pageSize, (page-1)*pageSize)
 	// Bodies are truncated: two requests by full trial bodies can exceed the
 	// WebView IPC message size and truncate the callback JSON. The detail view
 	// fetches full bodies by id via GetRequestLog.
-	rows, err := t.db.Query(`SELECT id,created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,substr(request_body,1,`+previewLimit+`),substr(response_body,1,`+previewLimit+`),input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message,credential_id,credential_name,credential_mask FROM request_logs`+where+` ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?`, queryArgs...)
+	rows, err := t.db.Query(`SELECT id,created_at,token_id,token_name,provider_id,provider_name,client_model,upstream_model,user_agent,substr(request_body,1,`+previewLimit+`),substr(response_body,1,`+previewLimit+`),input_tokens,output_tokens,cached_input_tokens,reasoning_output_tokens,success,latency_ms,error_message,credential_id,credential_name,credential_mask,plugin_id,plugin_before_tokens,plugin_after_tokens,plugin_saved_tokens,plugin_deltas_json FROM request_logs`+where+` ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return result, fmt.Errorf("query request logs: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var item RequestLog
-		if err := rows.Scan(&item.ID, &item.CreatedAt, &item.TokenID, &item.TokenName, &item.ProviderID, &item.ProviderName, &item.ClientModel, &item.UpstreamModel, &item.UserAgent, &item.RequestBody, &item.ResponseBody, &item.InputTokens, &item.OutputTokens, &item.CachedInputTokens, &item.ReasoningOutputTokens, &item.Success, &item.LatencyMS, &item.ErrorMessage, &item.CredentialID, &item.CredentialName, &item.CredentialMask); err != nil {
+		var deltasJSON string
+		if err := rows.Scan(&item.ID, &item.CreatedAt, &item.TokenID, &item.TokenName, &item.ProviderID, &item.ProviderName, &item.ClientModel, &item.UpstreamModel, &item.UserAgent, &item.RequestBody, &item.ResponseBody, &item.InputTokens, &item.OutputTokens, &item.CachedInputTokens, &item.ReasoningOutputTokens, &item.Success, &item.LatencyMS, &item.ErrorMessage, &item.CredentialID, &item.CredentialName, &item.CredentialMask, &item.PluginID, &item.PluginBeforeTokens, &item.PluginAfterTokens, &item.PluginSavedTokens, &deltasJSON); err != nil {
 			return result, fmt.Errorf("scan request log: %w", err)
 		}
+		decodePluginDeltas(deltasJSON, &item)
 		result.Items = append(result.Items, item)
 	}
 	if err := rows.Err(); err != nil {

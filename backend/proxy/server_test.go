@@ -15,6 +15,7 @@ import (
 
 	"agent-router/backend/config"
 	"agent-router/backend/credential"
+	"agent-router/backend/plugin"
 	"agent-router/backend/provider"
 	"agent-router/backend/storage"
 	"agent-router/backend/usage"
@@ -45,7 +46,7 @@ func (s fakeStore) Delete(account string) error { delete(s, account); return nil
 // fakeSecrets map describes legacy credentials: each entry is stored under its
 // own reference and adopted by the pool on first use, which is exactly the
 // upgrade path a single-key install takes.
-func newTestServer(db *sql.DB, registry *provider.Registry, mappings *config.MappingStore, secrets fakeSecrets, tracker *usage.SQLiteTracker, keys KeyVerifier) *Server {
+func newTestServer(db *sql.DB, registry *provider.Registry, mappings *config.MappingStore, secrets fakeSecrets, tracker *usage.SQLiteTracker, keys KeyVerifier, plugins ...*plugin.Store) *Server {
 	store := fakeStore{}
 	for account, value := range secrets {
 		store[account] = value
@@ -54,7 +55,11 @@ func newTestServer(db *sql.DB, registry *provider.Registry, mappings *config.Map
 	if err != nil {
 		panic(err)
 	}
-	return New(registry, mappings, pool, tracker, keys)
+	var pluginStore *plugin.Store
+	if len(plugins) > 0 {
+		pluginStore = plugins[0]
+	}
+	return New(registry, mappings, pool, tracker, keys, pluginStore)
 }
 
 type fakeKeys struct{ valid string }
@@ -123,7 +128,7 @@ func TestChatCompletionsMapsAndForwardsCompatibleRequest(t *testing.T) {
 	if got := usage.NewSQLiteTracker(db).Summary(); got.Requests != 1 || got.InputTokens != 5 || got.OutputTokens != 3 {
 		t.Fatalf("unexpected usage: %+v", got)
 	}
-	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +187,7 @@ func TestChatCompletionsRoutesAliasToUpstreamModel(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
-	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +444,7 @@ func TestAnthropicConversionEscapesTextAndReshapesTools(t *testing.T) {
 
 	// The log keeps what the Anthropic client received, not the OpenAI body that
 	// crossed the wire upstream.
-	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1008,7 +1013,7 @@ func TestTruncatedUpstreamStreamIsLoggedAsFailed(t *testing.T) {
 	if !strings.Contains(body, "event: error") {
 		t.Fatalf("client got no error event: %s", body)
 	}
-	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1228,7 +1233,7 @@ func TestStalledUpstreamStreamIsUnwedgedAndLogged(t *testing.T) {
 	if strings.Contains(body, "event: message_stop") {
 		t.Fatalf("message_stop emitted for a stalled stream: %s", body)
 	}
-	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1463,7 +1468,7 @@ func TestAnthropicPassthroughLogsTokenUsage(t *testing.T) {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
 	}
 
-	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1558,7 +1563,7 @@ func TestStreamingAnthropicToOpenAIRequestsAndReportsTokenUsage(t *testing.T) {
 		t.Fatalf("message_delta usage not filled in: %s", response.Body.String())
 	}
 
-	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1682,7 +1687,7 @@ func TestStreamingAnthropicUpstreamBecomesOpenAIChunks(t *testing.T) {
 	if !strings.HasSuffix(body, "data: [DONE]\n\n") {
 		t.Fatalf("stream not terminated: %s", body)
 	}
-	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{})
+	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
