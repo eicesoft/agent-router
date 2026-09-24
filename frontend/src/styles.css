@@ -709,6 +709,32 @@ header [data-slot="button"]:not(.provider-add) {
   display: inline-flex;
   align-items: center;
 }
+/* 数值列：主数值 + 可选第二行 note（成功率 / 费用拆分）。无 note 时只包 strong，
+   不改变原有单行宽度计算。 */
+.metric-value-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.metric-value-col > .tooltip__trigger {
+  display: inline-flex;
+  align-items: center;
+}
+.metric-note {
+  margin-top: 2px;
+  color: var(--muted-3);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+.metric-note-success {
+  color: #5ec892;
+}
+html.dark .metric-note-success {
+  color: #6fd3a0;
+}
 /* 无 tooltip 的卡片里 strong 是 .metric-head 的直接子元素；有 tooltip 的卡片
    （输入/输出 Tokens）的 strong 被 .tooltip__trigger 包住，所以这里不能写
    子选择器，否则恰恰是长数值的那张卡漏掉约束。
@@ -764,6 +790,21 @@ header [data-slot="button"]:not(.provider-add) {
   font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.045em;
+}
+/* note 也是 small，必须压过 .metric small 与 .metric-grid .metric small：
+   否则会被推到行尾、放大成 17px 标题。 */
+.metric-grid .metric .metric-note {
+  margin-left: 0;
+  color: var(--muted-3);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.metric-grid .metric .metric-note-success {
+  color: #5ec892;
+}
+html.dark .metric-grid .metric .metric-note-success {
+  color: #6fd3a0;
 }
 /* 单行 = 图标 + 数值 + 子标题。四列能否成立取决于最宽的那一行：副标题里
    最宽的是"输出 Tokens"（87.7px），输入卡在"缓存命中"四字删掉后只剩裸比例
@@ -888,6 +929,73 @@ header [data-slot="button"]:not(.provider-add) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.overview-model-select {
+  width: min(55%, 280px);
+  min-width: 0;
+  max-width: 100%;
+}
+.overview-model-select .select__trigger,
+.overview-model-select .autocomplete__trigger {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  min-height: 24px;
+  padding: 2px 8px;
+  padding-right: 26px;
+  border-radius: 6px;
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.overview-model-select .select__indicator,
+.overview-model-select .autocomplete__indicator {
+  right: 6px;
+  z-index: 1;
+}
+.overview-model-select .select__value,
+.overview-model-select [data-slot="select-value"],
+.overview-model-select .autocomplete__value,
+.overview-model-select [data-slot="autocomplete-value"] {
+  display: block;
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.overview-model-select .field-select-option-label,
+.overview-model-select .field-select-option-trigger,
+.overview-model-select .select__value > * {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.overview-model-value {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.overview-model-box {
+  height: 46px;
+}
+.overview-model-popover {
+  min-width: 260px;
 }
 .code-box .code-box-copy[data-slot="button"] {
   position: static;
@@ -5445,15 +5553,9 @@ html.dark .skills-add {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
-.plugins-config-btn {
-  margin: 0 !important;
-  padding: 0 !important;
-  min-width: 24px;
-  width: 24px;
-  height: 24px;
-}
+
 .plugins-card-head [data-slot="switch"] {
   flex-shrink: 0;
 }
@@ -5467,27 +5569,28 @@ html.dark .skills-add {
   color: var(--muted-2);
   font-size: 12px;
   line-height: 1.6;
+  /* 统一三行高度：长短简介都不把卡片撑得参差。 */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: calc(12px * 1.6 * 3);
 }
-.plugins-card-config {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--well-bg);
-  border: 1px solid var(--card-border);
+
+/* HeroUI Select 无 size prop：级别下拉收成 mini，紧贴「输入」chip 右侧同行。 */
+.plugins-config-select {
+  min-width: 96px;
+  max-width: 140px;
 }
-.plugins-config-current {
-  font-size: 11px;
-  color: var(--muted-3);
+.plugins-config-select .select__trigger {
+  height: 24px;
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
 }
-.plugins-stats-output {
-  padding-top: 0;
-}
-.plugins-stats-output .plugins-stat {
-  background: transparent;
-  border: 1px dashed var(--card-border);
-  padding: 6px 8px;
+.plugins-config-select .select__indicator {
+  right: 6px;
 }
 .plugins-stats {
   display: grid;

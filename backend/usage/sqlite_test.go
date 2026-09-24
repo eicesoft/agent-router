@@ -301,6 +301,55 @@ func TestUsageBreakdownPricedPerRoute(t *testing.T) {
 	}
 }
 
+// Summary 的费用与使用情况页同口径：按 provider×model 路由计价再上卷。
+func TestSummaryPricedPerRoute(t *testing.T) {
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "agent-router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tracker := NewSQLiteTracker(db)
+	for _, event := range []Event{
+		// openai/chat: 入 $10/M、出 $20/M、缓存 $1/M → uncached=6, out=5, cache=4
+		{ProviderID: "openai", ClientModel: "chat", InputTokens: 10, OutputTokens: 5, CachedInputTokens: 4, Success: true},
+		// deepseek/reasoner: 入 $1/M、出 $2/M、缓存 $0.5/M → uncached=8, out=3, cache=2
+		{ProviderID: "deepseek", ClientModel: "reasoner", InputTokens: 10, OutputTokens: 3, CachedInputTokens: 2, Success: false},
+	} {
+		if err := tracker.Record(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	price := func(providerID, _ string) (input, output, cacheRead float64) {
+		switch providerID {
+		case "openai":
+			return 10, 20, 1
+		case "deepseek":
+			return 1, 2, 0.5
+		}
+		return 0, 0, 0
+	}
+	s := tracker.Summary(price)
+	const eps = 1e-12
+	wantIn := (float64(6*10) + float64(8*1)) / 1e6
+	wantOut := (float64(5*20) + float64(3*2)) / 1e6
+	wantCache := (float64(4*1) + float64(2*0.5)) / 1e6
+	if s.Requests != 2 || s.SuccessRate != 50 {
+		t.Fatalf("counts = %+v", s)
+	}
+	if d := s.InputCost - wantIn; d > eps || d < -eps {
+		t.Fatalf("input cost = %v, want %v", s.InputCost, wantIn)
+	}
+	if d := s.OutputCost - wantOut; d > eps || d < -eps {
+		t.Fatalf("output cost = %v, want %v", s.OutputCost, wantOut)
+	}
+	if d := s.CacheCost - wantCache; d > eps || d < -eps {
+		t.Fatalf("cache cost = %v, want %v", s.CacheCost, wantCache)
+	}
+	if d := s.CostUSD - (wantIn + wantOut + wantCache); d > eps || d < -eps {
+		t.Fatalf("total cost = %v, want %v", s.CostUSD, wantIn+wantOut+wantCache)
+	}
+}
+
 // 使用情况页的四条聚合都跑在 request_logs 这张带大体积请求/响应体的表上。
 // 一旦查询计划退化成裸扫全表，SQLite 会顺序读取每一页（含 body 溢出页），
 // 生产库里就是「每次打开面板都卡几百毫秒并拉起磁盘 IO」。

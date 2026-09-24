@@ -171,14 +171,14 @@ func TestPlaygroundChatRelaysFramesAndTerminates(t *testing.T) {
 	// gateway's own log write by a hair — hence the poll.
 	logged := false
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
-		if app.usage.Summary().Requests == 1 {
+		if app.usage.Summary(nil).Requests == 1 {
 			logged = true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	if !logged {
-		t.Fatalf("request was not logged: %+v", app.usage.Summary())
+		t.Fatalf("request was not logged: %+v", app.usage.Summary(nil))
 	}
 }
 

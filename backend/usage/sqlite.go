@@ -535,12 +535,29 @@ func sortUsageStats(order []string, byKey map[string]*UsageStat) []UsageStat {
 	return stats
 }
 
-func (t *SQLiteTracker) Summary() Summary {
+// Summary aggregates usage_events for the overview cards. Counts cover every
+// row; costs are priced per provider×model route (nil price skips pricing) so
+// a failover chain bills at each route's unit price, matching UsageByProvider.
+func (t *SQLiteTracker) Summary(price PriceFunc) Summary {
 	var s Summary
 	var successes int
 	_ = t.db.QueryRow(`SELECT COUNT(*),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(cached_input_tokens),0),COALESCE(SUM(reasoning_output_tokens),0),COALESCE(SUM(success),0) FROM usage_events`).Scan(&s.Requests, &s.InputTokens, &s.OutputTokens, &s.CachedInputTokens, &s.ReasoningOutputTokens, &successes)
 	if s.Requests > 0 {
 		s.SuccessRate = float64(successes) * 100 / float64(s.Requests)
 	}
+	if price == nil {
+		return s
+	}
+	var total UsageStat
+	for _, stat := range t.UsageByProvider(price) {
+		total.InputCost += stat.InputCost
+		total.OutputCost += stat.OutputCost
+		total.CacheCost += stat.CacheCost
+		total.TotalCost += stat.TotalCost
+	}
+	s.InputCost = total.InputCost
+	s.OutputCost = total.OutputCost
+	s.CacheCost = total.CacheCost
+	s.CostUSD = total.TotalCost
 	return s
 }

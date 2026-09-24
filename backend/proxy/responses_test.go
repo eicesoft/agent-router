@@ -323,6 +323,53 @@ func TestResponsesMergesParallelToolCalls(t *testing.T) {
 	}
 }
 
+// 同一轮既有正文又有 tool_calls 时，必须合成一条 assistant 消息。拆成
+//「先正文、后调用」两条会让上游看到一个没有调用就结束的回合，模型会模仿
+// 这个模式只说「我这就去改」然后停下。
+func TestResponsesMergesTextWithToolCalls(t *testing.T) {
+	s, _, captured := responsesFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+	})
+
+	payload := `{
+		"model":"codex-model",
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"fix it"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"现在写入两处。"}]},
+			{"type":"function_call","name":"shell","arguments":"{\"command\":\"ls\"}","call_id":"call_1"},
+			{"type":"function_call_output","call_id":"call_1","output":"a.txt"}
+		],
+		"tools":[{"type":"function","name":"shell","description":"run","parameters":{"type":"object","properties":{}}}],
+		"stream":false
+	}`
+	response := postResponses(t, s, payload)
+	if response.Code != 200 {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	var sent Request
+	if err := json.Unmarshal([]byte(*captured), &sent); err != nil {
+		t.Fatalf("upstream body = %s: %v", *captured, err)
+	}
+	if len(sent.Messages) != 3 {
+		t.Fatalf("messages = %+v", sent.Messages)
+	}
+	merged := sent.Messages[1]
+	if merged.Role != "assistant" {
+		t.Fatalf("merged role = %s", merged.Role)
+	}
+	if !strings.Contains(string(merged.Content), "现在写入两处") {
+		t.Fatalf("text lost in merge: %+v", merged)
+	}
+	if !strings.Contains(string(merged.ToolCalls), `"call_1"`) {
+		t.Fatalf("tool_calls lost in merge: %+v", merged)
+	}
+	if sent.Messages[2].Role != "tool" || sent.Messages[2].ToolCallID != "call_1" {
+		t.Fatalf("tool result = %+v", sent.Messages[2])
+	}
+}
+
 // Codex 的 item 状态机要求正文 delta 归属一个已宣告的 item：没有先发
 // output_item.added 就发 delta，它会报「OutputTextDelta without active item」并把
 // delta 丢掉，流式逐字显示失效（只剩收尾那份完整内容兜底）。这个缺陷单测本来测不

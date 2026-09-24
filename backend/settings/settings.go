@@ -9,18 +9,21 @@ import (
 )
 
 const (
-	KeyHost  = "gateway_host"
-	KeyPort  = "gateway_port"
-	KeyTheme = "theme"
+	KeyHost         = "gateway_host"
+	KeyPort         = "gateway_port"
+	KeyTheme        = "theme"
+	KeyDefaultModel = "default_model"
 )
 
 // Settings is the flat view of every stored preference. Port is the gateway
 // listen port, Host the bind address ("127.0.0.1" or "0.0.0.0"), Theme the UI
-// color scheme.
+// color scheme, and DefaultModel the client model used when no explicit
+// selection exists.
 type Settings struct {
-	Host  string `json:"host"`
-	Port  int    `json:"port"`
-	Theme string `json:"theme"`
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+	Theme        string `json:"theme"`
+	DefaultModel string `json:"defaultModel"`
 }
 
 // Defaults applied when a key is missing from the store, matching the values
@@ -63,6 +66,8 @@ func (s *Store) Get() (Settings, error) {
 			}
 		case KeyTheme:
 			out.Theme = value
+		case KeyDefaultModel:
+			out.DefaultModel = value
 		}
 	}
 	return out, rows.Err()
@@ -74,6 +79,7 @@ func (s *Store) Save(in Settings) error {
 		{KeyHost, in.Host},
 		{KeyPort, strconv.Itoa(in.Port)},
 		{KeyTheme, in.Theme},
+		{KeyDefaultModel, in.DefaultModel},
 	} {
 		if kv.value == "" || kv.value == "0" {
 			continue

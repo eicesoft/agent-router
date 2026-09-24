@@ -135,6 +135,10 @@ export type Usage = {
   outputTokens: number;
   cachedInputTokens: number;
   reasoningOutputTokens: number;
+  // 与 UsageStat 同口径：inputCost 不含缓存 token，costUsd 为总价。
+  inputCost: number;
+  outputCost: number;
+  cacheCost: number;
   costUsd: number;
   successRate: number;
 };
@@ -284,6 +288,7 @@ export type AppSettings = {
   host: string;
   port: number;
   theme: string;
+  defaultModel: string;
 };
 export type PlaygroundChunk = { runId: string; data: string; done?: boolean };
 export type PlaygroundResult = { status: number; latencyMs: number };

@@ -62,6 +62,7 @@ export function SettingsModal({
         host: form.host,
         port,
         theme: form.theme,
+        defaultModel: form.defaultModel,
       });
       onSaved(next);
       onClose();

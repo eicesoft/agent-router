@@ -221,21 +221,37 @@ func (in responsesRequest) toChat() (Request, *toolPlan, []string) {
 	return out, plan, dropped
 }
 
-// appendOrMergeToolCall 把相邻的 assistant tool_calls 合并成一条消息。Codex 的
-// 并行调用在 input 里是多个独立 function_call item，但 Chat 上游要求它们属于同一
-// 条 assistant 消息；否则前一个 assistant 后面还是 assistant，会被判定缺少对应的
-// tool 消息。
+// appendOrMergeToolCall 把同一轮的 assistant 正文与 tool_calls 合成一条消息。
+// Codex 的并行调用在 input 里是多个独立 function_call item，但 Chat 上游要求它们
+// 属于同一条 assistant 消息；正文先于调用到达时也必须并进同一条。拆开会让上游
+// 看到「先一句没有调用的正文就结束」的回合，模型会模仿这个模式空谈不干活。
 func appendOrMergeToolCall(messages []Message, message Message) []Message {
 	last := len(messages) - 1
-	if last < 0 || message.Role != "assistant" || len(message.ToolCalls) == 0 ||
-		messages[last].Role != "assistant" || len(messages[last].ToolCalls) == 0 {
+	if last < 0 || message.Role != "assistant" || messages[last].Role != "assistant" {
 		return append(messages, message)
+	}
+	prev := &messages[last]
+	// 纯正文之间不合并：那是两段独立发言。
+	if len(prev.ToolCalls) == 0 && len(message.ToolCalls) == 0 {
+		return append(messages, message)
+	}
+	if len(message.Content) > 0 && string(message.Content) != "null" {
+		if len(prev.Content) == 0 || string(prev.Content) == "null" {
+			prev.Content = message.Content
+		}
+	}
+	if len(message.ToolCalls) == 0 {
+		return messages
+	}
+	if len(prev.ToolCalls) == 0 {
+		prev.ToolCalls = message.ToolCalls
+		return messages
 	}
 	var existing, added []json.RawMessage
-	if json.Unmarshal(messages[last].ToolCalls, &existing) != nil || json.Unmarshal(message.ToolCalls, &added) != nil {
+	if json.Unmarshal(prev.ToolCalls, &existing) != nil || json.Unmarshal(message.ToolCalls, &added) != nil {
 		return append(messages, message)
 	}
-	messages[last].ToolCalls = json.RawMessage(mustJSON(append(existing, added...)))
+	prev.ToolCalls = json.RawMessage(mustJSON(append(existing, added...)))
 	return messages
 }
 

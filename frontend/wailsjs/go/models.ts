@@ -541,6 +541,7 @@ export namespace settings {
 	    host: string;
 	    port: number;
 	    theme: string;
+	    defaultModel: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -551,6 +552,7 @@ export namespace settings {
 	        this.host = source["host"];
 	        this.port = source["port"];
 	        this.theme = source["theme"];
+	        this.defaultModel = source["defaultModel"];
 	    }
 	}
 
@@ -1087,6 +1089,9 @@ export namespace usage {
 	    outputTokens: number;
 	    cachedInputTokens: number;
 	    reasoningOutputTokens: number;
+	    inputCost: number;
+	    outputCost: number;
+	    cacheCost: number;
 	    costUsd: number;
 	    successRate: number;
 	
@@ -1101,6 +1106,9 @@ export namespace usage {
 	        this.outputTokens = source["outputTokens"];
 	        this.cachedInputTokens = source["cachedInputTokens"];
 	        this.reasoningOutputTokens = source["reasoningOutputTokens"];
+	        this.inputCost = source["inputCost"];
+	        this.outputCost = source["outputCost"];
+	        this.cacheCost = source["cacheCost"];
 	        this.costUsd = source["costUsd"];
 	        this.successRate = source["successRate"];
 	    }

@@ -33,6 +33,12 @@ func CompressChatMessages(messages []ChatMessage, level string) []ChatMessage {
 	out := make([]ChatMessage, len(messages))
 	copy(out, messages)
 	for i, m := range out {
+		// system/developer 是代理规程与工具用法（Codex 的 instructions 就落在
+		// system 消息里）。压掉等于删掉 agent 规程，模型只会空谈「我这就去改」
+		// 然后结束回合，必须原样保留。
+		if m.Role == "system" || m.Role == "developer" {
+			continue
+		}
 		// Assistant tool_calls arguments are protocol, not prose.
 		if len(m.ToolCalls) > 0 {
 			continue

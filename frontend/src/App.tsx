@@ -39,7 +39,7 @@ import {
   Orbit,
   Pencil,
   Plus,
-  Radio,
+  Coins,
   Sparkles,
   SquareTerminal,
   Trash2,
@@ -60,6 +60,7 @@ import {
   localAPIKeyEnvStatus,
   renderToolTemplate,
   refreshDevModels,
+  saveSettings,
   saveLocalAPIKey,
   saveModelMapping,
   saveProvider,
@@ -71,6 +72,7 @@ import {
   writeToolTemplate,
 } from "./lib/api";
 import type {
+  AppSettings,
   Bootstrap,
   ChainMode,
   EnvStatus,
@@ -186,7 +188,7 @@ const pageMeta: Record<Page, { title: string; description: string }> = {
     description: "为各 Agent CLI 生成指向本地网关的配置模板。",
   },
   plugins: {
-    title: "功能插件",
+    title: "插件",
     description: "配置在请求到达模型前对输入做处理的插件。",
   },
   skills: {
@@ -695,7 +697,19 @@ export default function App() {
         </header>
         <div className="page-scroll">
           {page === "overview" ? (
-            <Overview data={data} proxyRunning={proxyRunning} />
+            <Overview
+              data={data}
+              models={ensuredMappings.filter(
+                (m) =>
+                  m.enabled &&
+                  data.providers.some(
+                    (provider) =>
+                      provider.id === m.providerId && provider.enabled,
+                  ),
+              )}
+              proxyRunning={proxyRunning}
+              onSettingsChange={(settings) => setData({ ...data, settings })}
+            />
           ) : page === "usage" ? (
             <UsagePanel />
           ) : page === "providers" ? (
@@ -736,6 +750,7 @@ export default function App() {
               providers={data.providers}
               keys={data.apiKeys}
               proxyRunning={proxyRunning}
+              defaultModel={data.settings.defaultModel}
             />
           ) : page === "logs" ? (
             <RequestLogs
@@ -1143,12 +1158,13 @@ function RequestLogs({
     );
   // 统计口径跟随当前查询条件：后端把命中过滤的行聚合成 stats，前端只做展示。
   const stats = logs.stats;
-  const successRate =
-    stats.requests > 0 ? (stats.successes / stats.requests) * 100 : 0;
   const cacheRate =
     stats.inputTokens > 0
       ? (stats.cachedInputTokens / stats.inputTokens) * 100
       : 0;
+  const failures = stats.requests - stats.successes;
+  const successRate =
+    stats.requests > 0 ? (stats.successes / stats.requests) * 100 : 0;
   return (
     <section className="request-log-panel" aria-busy={loading}>
       <div
@@ -1165,10 +1181,6 @@ function RequestLogs({
             缓存 <TokenValue value={stats.cachedInputTokens} as="span" /> ·
             缓存命中 {cacheRate.toFixed(1)}%
           </small>
-          <small className="usage-cost-line">
-            输入费用 {formatCost(stats.inputCost)} · 缓存费用{" "}
-            {formatCost(stats.cacheCost)}
-          </small>
         </div>
         <div className="request-log-stat">
           <div className="request-log-stat-head">
@@ -1178,31 +1190,24 @@ function RequestLogs({
           <small>
             推理 <TokenValue value={stats.reasoningOutputTokens} as="span" />
           </small>
-          <small className="usage-cost-line">
-            输出费用 {formatCost(stats.outputCost)}
+        </div>
+        <div className="request-log-stat">
+          <div className="request-log-stat-head">
+            <span>请求数量</span>
+            <TokenValue value={stats.requests} />
+          </div>
+          <small>
+            失败 {num.format(failures)} · 成功率 {successRate.toFixed(1)}%
           </small>
         </div>
         <div className="request-log-stat">
           <div className="request-log-stat-head">
-            <span>总 Tokens</span>
-            <TokenValue value={stats.inputTokens + stats.outputTokens} />
+            <span>费用</span>
+            <strong>总: {formatCost(stats.totalCost)}</strong>
           </div>
-          <small>
-            {num.format(stats.cachedInputTokens)} 缓存 / 输入{" "}
-            {num.format(stats.inputTokens)}
-          </small>
           <small className="usage-cost-line">
-            总费用 {formatCost(stats.totalCost)}
-          </small>
-        </div>
-        <div className="request-log-stat">
-          <div className="request-log-stat-head">
-            <span>请求数</span>
-            <strong>{num.format(stats.requests)}</strong>
-          </div>
-          <small>
-            成功 {num.format(stats.successes)} · 成功率 {successRate.toFixed(1)}
-            %
+            输入 {formatCost(stats.inputCost)} · 输出{" "}
+            {formatCost(stats.outputCost)} · 缓存 {formatCost(stats.cacheCost)}
           </small>
         </div>
       </div>
@@ -1946,36 +1951,76 @@ function UsageStatList({
 }
 function Overview({
   data,
+  models,
   proxyRunning,
+  onSettingsChange,
 }: {
   data: Bootstrap;
+  models: ModelMapping[];
   proxyRunning: boolean;
+  onSettingsChange: (settings: AppSettings) => void;
 }) {
   const baseURL = "http://127.0.0.1:9400/v1";
   const [baseURLCopied, setBaseURLCopied] = useState(false);
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const [modelError, setModelError] = useState("");
   const u = data.usage;
   const cacheRate =
     u.inputTokens > 0 ? (u.cachedInputTokens / u.inputTokens) * 100 : 0;
   const enabledProviders = data.providers.filter((p) => p.enabled);
-  const firstRoutable = enabledProviders.find((p) => p.models.length > 0);
-  const quickStartModel = firstRoutable
-    ? (data.mappings.find(
-        (m) =>
-          m.providerId === firstRoutable.id &&
-          m.upstreamModel === firstRoutable.models[0],
-      )?.clientModel ??
-      defaultClientModel(firstRoutable, firstRoutable.models[0]))
-    : "";
+  const modelOptions = [
+    ...new Map(models.map((item) => [item.clientModel, item])).values(),
+  ].map((item) => ({
+    value: item.clientModel,
+    label: item.clientModel,
+    tooltip: `${item.upstreamModel} · ${
+      data.providers.find((provider) => provider.id === item.providerId)
+        ?.name ?? item.providerId
+    }`,
+  }));
+  const quickStartModel = modelOptions.some(
+    (option) => option.value === data.settings.defaultModel,
+  )
+    ? data.settings.defaultModel
+    : (modelOptions[0]?.value ?? "");
+  const defaultKey = data.apiKeys.find((key) => key.enabled && key.key);
+  const maskToken = (value: string) =>
+    value.length <= 8
+      ? "••••••••"
+      : `${value.slice(0, 4)}••••${value.slice(-4)}`;
+  const saveDefaultModel = async (value: string | null) => {
+    if (!value || value === data.settings.defaultModel) return;
+    setModelError("");
+    try {
+      const next = await saveSettings({
+        ...data.settings,
+        defaultModel: value,
+      });
+      onSettingsChange(next);
+    } catch (err) {
+      setModelError(err instanceof Error ? err.message : String(err));
+    }
+  };
   useEffect(() => {
     if (!baseURLCopied) return;
     const timer = setTimeout(() => setBaseURLCopied(false), 1400);
     return () => clearTimeout(timer);
   }, [baseURLCopied]);
+  useEffect(() => {
+    if (!tokenCopied) return;
+    const timer = setTimeout(() => setTokenCopied(false), 1400);
+    return () => clearTimeout(timer);
+  }, [tokenCopied]);
   return (
     <>
       {baseURLCopied && (
         <span className="route-toast" role="status">
           已复制 BaseUrl
+        </span>
+      )}
+      {tokenCopied && (
+        <span className="route-toast" role="status">
+          已复制 Token
         </span>
       )}
       <section className="metric-grid">
@@ -1984,7 +2029,18 @@ function Overview({
             // 副行不再写口径标注（"全部时间"），改为直接给出该卡片的标题。
             // 口径依据仍在：Summary() 对 usage_events 做全表聚合、无时间谓词，
             // 只是这句话不该由每张卡片各写一遍。
-            ["请求总数", num.format(u.requests), Activity, "请求总数", "", ""],
+            // 数值下方的 note 是第二行：请求总数挂淡绿成功率，消耗金额挂输入/输出拆分。
+            [
+              "请求总数",
+              num.format(u.requests),
+              Activity,
+              "请求总数",
+              "",
+              "",
+              `${u.successRate.toFixed(2)}%`,
+              "metric-note-success",
+              "成功率",
+            ],
             [
               "输入 Tokens",
               formatTokenCount(u.inputTokens),
@@ -1996,6 +2052,9 @@ function Overview({
               // 裸比例挂在 DOM 里对读屏是无指代对象的数字，补一个不可见的名词。
               // 它不能并进 sub：sub 要参与宽度计算，多四个字就把断点顶回去。
               "缓存命中",
+              "",
+              "",
+              "",
             ],
             [
               "输出 Tokens",
@@ -2004,41 +2063,89 @@ function Overview({
               "输出 Tokens",
               `输出 ${num.format(u.outputTokens)}`,
               "",
+              "",
+              "",
+              "",
             ],
-            ["成功率", `${u.successRate.toFixed(2)}%`, Radio, "成功率", "", ""],
-          ] as Array<[string, string, LucideIcon, string, string, string]>
-        ).map(([label, value, Icon, sub, tooltip, srLabel]) => (
-          <Card className="metric" key={label}>
-            <Card.Content>
-              {/* 图标换成数值后已无可见文字承载语义，标题必须留在 DOM 里；
-                  但子标题本身已是卡片标题时（三张卡）不能再放一份，
-                  否则读屏会把同一句话念两遍。
-                  srLabel 是第四张卡的例外：它可见的副标题只剩 "96.2%"，
-                  需要一个不可见的名词补上指代。 */}
-              {sub !== label && (
-                <span className="sr-only">{srLabel || label}</span>
-              )}
-              <div className="metric-head">
-                <span className="metric-icon">
-                  <Icon size={19} />
-                </span>
-                {tooltip ? (
-                  <Tooltip>
-                    <Tooltip.Trigger>
-                      <strong className="metric-token-value">{value}</strong>
-                    </Tooltip.Trigger>
-                    <Tooltip.Content>{tooltip}</Tooltip.Content>
-                  </Tooltip>
-                ) : (
-                  <strong>{value}</strong>
+            [
+              "消耗金额",
+              formatCost(u.costUsd),
+              Coins,
+              "消耗金额",
+              `输入 ${formatCost(u.inputCost)} · 输出 ${formatCost(u.outputCost)} · 缓存 ${formatCost(u.cacheCost)}`,
+              "消耗金额",
+              `入 ${formatCost(u.inputCost)} · 出 ${formatCost(u.outputCost)}`,
+              "",
+              "",
+            ],
+          ] as Array<
+            [
+              string,
+              string,
+              LucideIcon,
+              string,
+              string,
+              string,
+              string,
+              string,
+              string,
+            ]
+          >
+        ).map(
+          ([
+            label,
+            value,
+            Icon,
+            sub,
+            tooltip,
+            srLabel,
+            note,
+            noteClass,
+            noteLabel,
+          ]) => (
+            <Card className="metric" key={label}>
+              <Card.Content>
+                {/* 图标换成数值后已无可见文字承载语义，标题必须留在 DOM 里；
+                    但子标题本身已是卡片标题时（三张卡）不能再放一份，
+                    否则读屏会把同一句话念两遍。
+                    srLabel 是第四张卡的例外：它可见的副标题只剩 "96.2%"，
+                    需要一个不可见的名词补上指代。 */}
+                {sub !== label && (
+                  <span className="sr-only">{srLabel || label}</span>
                 )}
-                {/* 窄窗口下这一行会被省略号截断（1280px 四列时约 46px 可用），
-                    title 让截断的内容仍可在悬停时读到。 */}
-                <small title={sub}>{sub}</small>
-              </div>
-            </Card.Content>
-          </Card>
-        ))}
+                <div className="metric-head">
+                  <span className="metric-icon">
+                    <Icon size={19} />
+                  </span>
+                  <span className="metric-value-col">
+                    {tooltip ? (
+                      <Tooltip>
+                        <Tooltip.Trigger>
+                          <strong className="metric-token-value">{value}</strong>
+                        </Tooltip.Trigger>
+                        <Tooltip.Content>{tooltip}</Tooltip.Content>
+                      </Tooltip>
+                    ) : (
+                      <strong>{value}</strong>
+                    )}
+                    {note && (
+                      <small
+                        className={`metric-note ${noteClass}`.trim()}
+                        title={noteLabel ? `${noteLabel} ${note}` : undefined}
+                      >
+                        {noteLabel && <span className="sr-only">{noteLabel} </span>}
+                        {note}
+                      </small>
+                    )}
+                  </span>
+                  {/* 窄窗口下这一行会被省略号截断（1280px 四列时约 46px 可用），
+                      title 让截断的内容仍可在悬停时读到。 */}
+                  <small title={sub}>{sub}</small>
+                </div>
+              </Card.Content>
+            </Card>
+          ),
+        )}
       </section>
       <section className="two-col">
         <Card className="panel">
@@ -2120,9 +2227,56 @@ function Overview({
                 <code>{baseURL}</code>
               </div>
             </div>
-            <div className="code-box">
+            <div className="code-box overview-model-box">
               <span>Model</span>
-              <code>{quickStartModel || "暂无可用模型"}</code>
+              <div className="code-box-value overview-model-select">
+                <FieldSelect
+                  value={quickStartModel || null}
+                  onChange={(value) => void saveDefaultModel(value)}
+                  options={modelOptions}
+                  renderValue={(value) => (
+                    <span className="overview-model-value">{value}</span>
+                  )}
+                  isDisabled={!modelOptions.length}
+                  isSearchable={modelOptions.length > 8}
+                  fullWidth
+                  popoverClassName="overview-model-popover"
+                />
+              </div>
+            </div>
+            {modelError && (
+              <p className="provider-form-note settings-note">{modelError}</p>
+            )}
+            <div className="code-box">
+              <span>Token</span>
+              <div className="code-box-value">
+                <Tooltip>
+                  <Tooltip.Trigger>
+                    <Button
+                      isIconOnly
+                      size="sm"
+                      variant="ghost"
+                      className="code-box-copy"
+                      isDisabled={!defaultKey}
+                      onPress={() =>
+                        defaultKey &&
+                        void copyToClipboard(defaultKey.key).then(
+                          setTokenCopied,
+                        )
+                      }
+                      aria-label="复制 Token"
+                    >
+                      <Copy size={14} />
+                    </Button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Content>
+                    {tokenCopied ? "已复制" : "复制 Token"}
+                  </Tooltip.Content>
+                </Tooltip>
+                <code>
+                  {defaultKey ? maskToken(defaultKey.key) : "暂无启用密钥"}
+                </code>
+              </div>
             </div>
           </Card.Content>
         </Card>

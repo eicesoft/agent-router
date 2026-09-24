@@ -109,3 +109,19 @@ func TestCompressChatLeavesToolCallsStructuresAlone(t *testing.T) {
 		t.Fatalf("tool_calls must be untouched")
 	}
 }
+
+// system/developer 承载代理规程（Codex 的 instructions）。压缩会把 agent 用法
+// 说明砍成头尾两截，模型于是只回「我这就去改」就结束回合，必须原样保留。
+func TestCompressChatKeepsSystemInstructions(t *testing.T) {
+	long := strings.Repeat("Always call tools before claiming work is done. ", 80)
+	encoded, err := json.Marshal(long)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys := ChatMessage{Role: "system", Content: encoded}
+	dev := ChatMessage{Role: "developer", Content: encoded}
+	out := CompressChatMessages([]ChatMessage{sys, dev}, CavemanLevelUltra)
+	if string(out[0].Content) != string(encoded) || string(out[1].Content) != string(encoded) {
+		t.Fatalf("system/developer must not be compressed")
+	}
+}

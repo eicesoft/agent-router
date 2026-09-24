@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Chip, Switch, Tooltip } from "@heroui/react";
-import { RefreshCw, Settings2 } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { listPlugins, setPluginConfig, togglePlugin } from "../lib/api";
 import type { PluginInfo } from "../lib/types";
 import { formatTokenCount } from "../lib/format";
@@ -21,17 +21,12 @@ const CAVEMAN_LEVELS: { value: string; label: string }[] = [
   { value: "wenyan-ultra", label: "文Ultra" },
 ];
 
-function cavemanLevelLabel(level: string): string {
-  return CAVEMAN_LEVELS.find((item) => item.value === level)?.label ?? level;
-}
-
-// 功能插件列表：类型 / 启停 / 累计压缩统计；有配置才显示设置入口。
+// 功能插件列表：类型 / 启停 / 累计压缩统计；caveman 级别下拉直接嵌在原设置钮位置。
 export function PluginsPanel() {
   const [plugins, setPlugins] = useState<PluginInfo[] | null>(null);
-  const [error, setError] = useState("");
   const [toggling, setToggling] = useState<string | null>(null);
-  const [configuring, setConfiguring] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState<string | null>(null);
+  const [error, setError] = useState("");
 
   const reload = () => {
     listPlugins()
@@ -96,24 +91,17 @@ export function PluginsPanel() {
                 <Chip size="sm" variant="soft">
                   {kindLabel[p.kind] ?? p.kind}
                 </Chip>
-                {p.hasConfig && (
-                  <Tooltip>
-                    <Tooltip.Trigger>
-                      <Button
-                        isIconOnly
-                        size="sm"
-                        variant="ghost"
-                        className="plugins-config-btn"
-                        aria-label={`配置${p.name}`}
-                        onPress={() =>
-                          setConfiguring(configuring === p.id ? null : p.id)
-                        }
-                      >
-                        <Settings2 size={14} />
-                      </Button>
-                    </Tooltip.Trigger>
-                    <Tooltip.Content>插件设置</Tooltip.Content>
-                  </Tooltip>
+                {p.hasConfig && p.id === "caveman" && (
+                  <FieldSelect
+                    className="plugins-config-select"
+                    placeholder="处理级别"
+                    value={p.config?.level ?? "full"}
+                    onChange={(value) => {
+                      if (value) void onLevelChange(p.id, value);
+                    }}
+                    options={CAVEMAN_LEVELS}
+                    isDisabled={savingConfig === p.id}
+                  />
                 )}
               </div>
               <Tooltip>
@@ -138,32 +126,15 @@ export function PluginsPanel() {
               </Tooltip>
             </div>
             <p className="plugins-card-desc">{p.description}</p>
-            {p.hasConfig && configuring === p.id && p.id === "caveman" && (
-              <div className="plugins-card-config">
-                <FieldSelect
-                  label="处理级别"
-                  value={p.config?.level ?? "full"}
-                  onChange={(value) => {
-                    if (value) void onLevelChange(p.id, value);
-                  }}
-                  options={CAVEMAN_LEVELS}
-                  isDisabled={savingConfig === p.id}
-                  fullWidth
-                />
-                <div className="plugins-config-current">
-                  当前：{cavemanLevelLabel(p.config?.level ?? "full")}
-                </div>
-              </div>
-            )}
             <div className="plugins-stats">
               <div className="plugins-stat">
-                <span className="plugins-stat-label">输入Token</span>
+                <span className="plugins-stat-label">输入</span>
                 <span className="plugins-stat-value">
                   {formatTokenCount(p.inputTokens)}
                 </span>
               </div>
               <div className="plugins-stat">
-                <span className="plugins-stat-label">压缩后Token</span>
+                <span className="plugins-stat-label">压缩后</span>
                 <span className="plugins-stat-value">
                   {formatTokenCount(p.outputTokens)}
                 </span>
@@ -181,38 +152,6 @@ export function PluginsPanel() {
                 </span>
               </div>
             </div>
-            {p.id === "caveman" && (
-              <div className="plugins-stats plugins-stats-output">
-                <div className="plugins-stat">
-                  <span className="plugins-stat-label">输出均值·开启</span>
-                  <span className="plugins-stat-value">
-                    {p.responseCount > 0
-                      ? formatTokenCount(Math.round(p.responseAvg))
-                      : "—"}
-                  </span>
-                </div>
-                <div className="plugins-stat">
-                  <span className="plugins-stat-label">输出均值·关闭</span>
-                  <span className="plugins-stat-value">
-                    {p.baselineCount > 0
-                      ? formatTokenCount(Math.round(p.baselineAvg))
-                      : "—"}
-                  </span>
-                </div>
-                <div className="plugins-stat">
-                  <span className="plugins-stat-label">输出节省</span>
-                  <span className="plugins-stat-value">
-                    {p.outputSavingsRate > 0 ? pct(p.outputSavingsRate) : "—"}
-                  </span>
-                </div>
-                <div className="plugins-stat">
-                  <span className="plugins-stat-label">样本·开/关</span>
-                  <span className="plugins-stat-value">
-                    {p.responseCount}/{p.baselineCount}
-                  </span>
-                </div>
-              </div>
-            )}
           </div>
         ))}
       </div>

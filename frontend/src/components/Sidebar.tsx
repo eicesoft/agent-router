@@ -32,7 +32,7 @@ const items = [
   ["keys", "本地密钥", KeyRound],
   ["mappings", "模型映射", SlidersHorizontal],
   ["agents", "Agent", Bot],
-  ["plugins", "功能插件", Puzzle],
+  ["plugins", "插件", Puzzle],
   ["skills", "Skills", SquareTerminal],
   ["playground", "演练场", FlaskConical],
 ] as const;

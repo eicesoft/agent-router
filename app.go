@@ -126,7 +126,7 @@ func (a *App) GetBootstrap() Bootstrap {
 		Providers:    a.providers.List(),
 		Mappings:     a.mappings.List(),
 		Agents:       a.agents.List(),
-		Usage:        a.usage.Summary(),
+		Usage:        a.usage.Summary(a.mappings.PriceFor),
 		APIKeys:      a.keys.List(),
 		ProxyRunning: a.proxy.Running(),
 		Settings:     a.appSettings(),

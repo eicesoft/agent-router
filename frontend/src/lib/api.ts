@@ -92,6 +92,9 @@ const demo: Bootstrap = {
     outputTokens: 218401,
     cachedInputTokens: 0,
     reasoningOutputTokens: 0,
+    inputCost: 11.2,
+    outputCost: 3.62,
+    cacheCost: 0,
     costUsd: 14.82,
     successRate: 99.6,
   },
@@ -106,7 +109,12 @@ const demo: Bootstrap = {
     },
   ],
   proxyRunning: true,
-  settings: { host: "127.0.0.1", port: 9400, theme: "light" },
+  settings: {
+    host: "127.0.0.1",
+    port: 9400,
+    theme: "light",
+    defaultModel: "gpt-4.1",
+  },
   chainModes: {},
   plugins: [
     {

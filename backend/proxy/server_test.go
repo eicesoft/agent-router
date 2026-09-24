@@ -125,7 +125,7 @@ func TestChatCompletionsMapsAndForwardsCompatibleRequest(t *testing.T) {
 	if !strings.Contains(response.Body.String(), "chatcmpl-1") {
 		t.Fatalf("unexpected response: %s", response.Body.String())
 	}
-	if got := usage.NewSQLiteTracker(db).Summary(); got.Requests != 1 || got.InputTokens != 5 || got.OutputTokens != 3 {
+	if got := usage.NewSQLiteTracker(db).Summary(nil); got.Requests != 1 || got.InputTokens != 5 || got.OutputTokens != 3 {
 		t.Fatalf("unexpected usage: %+v", got)
 	}
 	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)

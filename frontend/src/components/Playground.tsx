@@ -355,13 +355,12 @@ const frameLabels: Record<FrameKind, string> = {
 // 语法着色（键/值/括号各自一色）对所有帧一律保留——类型信息正是调试时最要紧的一层，
 // 早期给文本/推理帧开的「单色档」把它们冲成一片同色，已废弃；帧底色仍靠 .pg-frame.*
 // 区分（文本白底、推理浅底、用量/结束彩底），语法色按底色挑一套，见 styles.css。
-const MODEL_STORAGE_KEY = "agent-router.playground.model";
-
 export function Playground({
   models,
   providers,
   keys,
   proxyRunning,
+  defaultModel,
   onRegisterReset,
   onHasContentChange,
 }: {
@@ -369,13 +368,14 @@ export function Playground({
   providers: Provider[];
   keys: LocalAPIKey[];
   proxyRunning: boolean;
+  defaultModel: string;
   onRegisterReset: (reset: (() => void) | null) => void;
   onHasContentChange: (hasContent: boolean) => void;
 }) {
   const [model, setModel] = useState<string | null>(() => {
-    const saved = localStorage.getItem(MODEL_STORAGE_KEY);
-    return saved && models.some((item) => item.clientModel === saved)
-      ? saved
+    return defaultModel &&
+      models.some((item) => item.clientModel === defaultModel)
+      ? defaultModel
       : (models[0]?.clientModel ?? null);
   });
   const [input, setInput] = useState("");
@@ -401,10 +401,6 @@ export function Playground({
     if (model && models.some((item) => item.clientModel === model)) return;
     setModel(models[0]?.clientModel ?? null);
   }, [models, model]);
-
-  useEffect(() => {
-    if (model) localStorage.setItem(MODEL_STORAGE_KEY, model);
-  }, [model]);
 
   useEffect(() => {
     const off = EventsOn("playground:chunk", (chunk: PlaygroundChunk) => {
