@@ -3,6 +3,7 @@ import {
   Cable,
   ChartNoAxesCombined,
   FlaskConical,
+  Info,
   KeyRound,
   LayoutDashboard,
   PanelLeftClose,
@@ -49,6 +50,7 @@ export function Sidebar({
   proxyRunning,
   width,
   onOpenSettings,
+  onOpenAbout,
 }: {
   page: Page;
   setPage: (page: Page) => void;
@@ -62,6 +64,7 @@ export function Sidebar({
   proxyRunning: boolean;
   width: number;
   onOpenSettings: () => void;
+  onOpenAbout: () => void;
 }) {
   if (collapsed)
     return (
@@ -112,6 +115,16 @@ export function Sidebar({
           <ChartNoAxesCombined size={18} />
         </Button>
         <div className="rail-spacer" />
+        <Button
+          isIconOnly
+          size="sm"
+          variant="ghost"
+          className="rail-action"
+          aria-label="关于"
+          onPress={onOpenAbout}
+        >
+          <Info size={18} />
+        </Button>
         <Button
           isIconOnly
           size="sm"
@@ -207,15 +220,26 @@ export function Sidebar({
             {proxyRunning ? "监听 127.0.0.1:9400" : "本地代理已停止"}
           </Tooltip.Content>
         </Tooltip>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="collapse-button"
-          aria-label="设置"
-          onPress={onOpenSettings}
-        >
-          <Settings2 size={15} />
-        </Button>
+        <div className="sidebar-foot-actions">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="collapse-button"
+            aria-label="关于"
+            onPress={onOpenAbout}
+          >
+            <Info size={15} />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="collapse-button"
+            aria-label="设置"
+            onPress={onOpenSettings}
+          >
+            <Settings2 size={15} />
+          </Button>
+        </div>
       </div>
     </aside>
   );

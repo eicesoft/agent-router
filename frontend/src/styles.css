@@ -502,6 +502,11 @@ body.pane-resizing .resize-handle::after,
   justify-content: space-between;
   gap: 7px;
 }
+.sidebar-foot-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
 .sidebar-foot-status {
   display: flex;
   align-items: center;
@@ -2115,6 +2120,22 @@ code {
   margin: 0;
   font-size: 12px;
   color: var(--error-ink);
+}
+.about-info {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 10px 16px;
+  margin: 0;
+}
+.about-info dt {
+  color: var(--sidebar-muted);
+  font-size: 12px;
+}
+.about-info dd {
+  margin: 0;
+  color: var(--ink-body);
+  font-size: 13px;
+  word-break: break-all;
 }
 .provider-model-selector {
   display: flex;

@@ -261,6 +261,7 @@ export default function App() {
   const [keyToDelete, setKeyToDelete] = useState<LocalAPIKey | null>(null);
   const [deletingKey, setDeletingKey] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   useEffect(() => {
     bootstrap().then(setData);
   }, []);
@@ -620,6 +621,7 @@ export default function App() {
         proxyRunning={proxyRunning}
         width={sidebarWidth}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenAbout={() => setAboutOpen(true)}
       />
       {!collapsed && (
         <div
@@ -812,6 +814,33 @@ export default function App() {
           applyTheme(next.theme);
         }}
       />
+      <Modal
+        isOpen={aboutOpen}
+        onOpenChange={(open) => !open && setAboutOpen(false)}
+      >
+        <Modal.Backdrop>
+          <Modal.Container size="sm">
+            <Modal.Dialog>
+              <Modal.Header>
+                <Modal.Heading>关于</Modal.Heading>
+                <Modal.CloseTrigger />
+              </Modal.Header>
+              <Modal.Body>
+                <dl className="about-info">
+                  <dt>软件名称</dt>
+                  <dd>Agent Router</dd>
+                  <dt>版本</dt>
+                  <dd>0.4.0</dd>
+                  <dt>作者</dt>
+                  <dd>Kelezyb</dd>
+                  <dt>GitHub 地址</dt>
+                  <dd>https://github.com/eicesoft/agent-router</dd>
+                </dl>
+              </Modal.Body>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal>
       <Modal
         isOpen={providerToDelete !== null}
         onOpenChange={(isOpen) => {
