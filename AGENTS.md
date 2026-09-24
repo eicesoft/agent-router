@@ -33,7 +33,7 @@ cd frontend && npm run formatter  # 前端格式化（改前端后必须跑）
 storage（SQLite 叶子层）  ← 以 *sql.DB 注入给消费者
 provider / config / apikey / usage  ← 通过构造函数消费 *sql.DB
 credential  ← 消费 *sql.DB + secret.Store，独占上游凭据池
-secret（Keychain）+ agent（内存）+ envcfg + templates  ← 不依赖业务 DB
+secret（OS 密钥库）+ agent（内存）+ envcfg + templates  ← 不依赖业务 DB
 proxy（后端顶层）  ← 依赖 provider、config、credential、usage
 app.go（package main）  ← 组合根，组装所有组件
 main.go  ← Wails 引导，绑定 *App；tray_darwin.go / tray_windows.go / tray_other.go 提供各平台托盘（窗口关闭=隐藏到托盘）
@@ -43,19 +43,20 @@ main.go  ← Wails 引导，绑定 *App；tray_darwin.go / tray_windows.go / tra
 
 ```
 React UI → App 方法（Wails 绑定）
-  → SQLite 存储（providers/mappings/apikeys/usage/provider_credentials）  |  Keychain（上游 API 密钥）
+  → SQLite 存储（providers/mappings/apikeys/usage/provider_credentials）  |  OS 密钥库（上游 API 密钥）
   → proxy.Server（127.0.0.1:9400）→ credential.Pool 选 Key → Adapter → 上游 LLM
   → usage.SQLiteTracker → SQLite（含 credential_id/credential_name/credential_mask）
 ```
 
 **必须保留的架构决策：**
 
-- **上游凭据绝不持久化到 SQLite。** 真实 token 仅存 macOS Keychain（`security` 命令，服务名 `com.agentrouter.credentials`）；`provider_credentials` 行只存不透明 `secret_ref`。参见 `app.go` 的凭据绑定与 `backend/secret/keychain.go`。`providers.api_key_ref` 收窄为遗留字段：仅作为升级前单 Key 的载体，由 `credential.Pool` 在首次使用时认领为第一条凭据，新逻辑不再读它选 Key。本网关自身的 key（`backend/apikey/`）存 SQLite，仅写入用户新终端环境的 `AGENT_ROUTER_API_KEY`（`backend/envcfg/`）供 CLI 客户端认证。
+- **上游凭据绝不持久化到 SQLite。** 真实 token 只进 OS 密钥库：macOS 用 Keychain（`security`，服务名 `com.agentrouter.credentials`），Windows 用 Credential Manager（`advapi32` 的 `CredWriteW`/`CredReadW`/`CredDeleteW`，target 前缀同名），Linux 等无原生实现的平台退回进程内存（重启即失，与旧 Windows 行为相同）。`provider_credentials` 行只存不透明 `secret_ref`。参见 `app.go` 的凭据绑定与 `backend/secret/`（`keychain.go` 接口 + 按 `GOOS` 分文件实现）。`providers.api_key_ref` 收窄为遗留字段：仅作为升级前单 Key 的载体，由 `credential.Pool` 在首次使用时认领为第一条凭据，新逻辑不再读它选 Key。本网关自身的 key（`backend/apikey/`）存 SQLite，仅写入用户新终端环境的 `AGENT_ROUTER_API_KEY`（`backend/envcfg/`）供 CLI 客户端认证。
 - **掩码是唯一的例外，且只允许派生形式。** `credential.MaskSecret` 产出 `ss****sfg`（首 2 尾 3），落库在 `provider_credentials.mask` 与 `request_logs.credential_mask`，供 UI 与日志辨识是哪个 Key，无需回读 Keychain，且凭据删除后历史日志仍可读。它刻意短到不可用。派生点都在明文已在手处（`Add`/`Adopt`/`ReplaceSecret`/`Acquire`/`adoptLegacyLocked`），因此不增加 Keychain 往返；`backfillMasks` 在 `NewPool` 时补写存量行，每个凭据至多一次。**除此之外任何 secret 片段都不得落库**——尾 4 位这类"提示"曾被明确否决，掩码是经用户确认后重开的口子，不要再扩大它。
-- **凭据池是上游 Key 的唯一 owner：`backend/credential`。** 一个 provider 可有多条凭据，按 `credential_mode` 选择：`session`（默认，会话粘性，顺带命中上游按 Key 隔离的 prompt cache）、`round_robin`、`least_used`（按请求数/权重）、`random`。健康状态（冷却、永久失效）只在内存，重启即清空；失效状态落库，因为被拒的 Key 不会自愈，需手动重置。`proxy` 四处取 Key 点（`chatCompletions`、`messagesHandler` 的 `anthropicPassthrough` 与 `anthropicViaOpenAI`、`responses`）统一经 `withCredential` 闭包，因此 failover 不改变 `Adapter` 契约。
+- **凭据池是上游 Key 的唯一 owner：`backend/credential`。** 一个 provider 可有多条凭据，按 `credential_mode` 选择：`session`（默认，会话粘性，顺带命中上游按 Key 隔离的 prompt cache）、`round_robin`、`least_used`（按请求数/权重）、`random`。健康状态（冷却）只在内存，重启即清空；失效状态落库——上游 401/403 拒绝的 Key 不会自愈，需手动 Reset；secret 读不到导致的失效则在下次 `NewPool` 时自愈（见下条）。`proxy` 四处取 Key 点（`chatCompletions`、`messagesHandler` 的 `anthropicPassthrough` 与 `anthropicViaOpenAI`、`responses`）统一经 `withCredential` 闭包，因此 failover 不改变 `Adapter` 契约。
 - **`/v1/responses` 是纯转换层，不做 Responses↔Anthropic 双向转换。** Codex CLI 只支持 Responses 线协议（`wire_api` 唯一取值），所以网关把它转成 Chat Completions 发上游、再把响应（含流式 SSE、工具调用、推理内容）转回 Responses 形状。映射到 `anthropic` 类 provider 时返回 501。三条来自 Codex 源码的硬约束：工具调用的参数只能靠 `response.output_item.done` 里一份完整 item 交付（Codex 忽略 `function_call_arguments.delta/done`）；正文/推理的 `delta` 必须归属一个已用 `output_item.added` 宣告过的 item，否则 Codex 报「OutputTextDelta without active item」并丢弃 delta，流式逐字显示失效；`response.completed` 的 `id` 与 `usage.{input_tokens,output_tokens,total_tokens}` 是非 Option 字段，缺一个整条事件解析失败。Codex 切片的 `custom`（freeform，如 `apply_patch`）工具包成单字符串入参的 function 双向转换，只有 `web_search`/`tool_search` 这类 hosted 工具丢弃并记进请求日志。
 - **`namespace` 工具必须展开，不能丢弃；Responses Lite 的工具表在 `input` 里。** Codex 的 `ToolName` 是 `(namespace, name)` 二元组而非 `"ns.tool"` 字符串（`codex-rs/protocol/src/tool_name.rs`），Chat 上游又只收一个按 `^[a-zA-Z0-9_-]{1,64}$` 校验的扁平函数名，所以网关用 `toolPlan` 做双向改名：`functions` 里的成员保持裸名，其余前置 `namespace__`，撞名追加 `_2`/`_3`；响应侧查回 `(namespace, name)`，非默认 namespace 才带 `namespace` 字段（省略即等于 `functions`），custom 成员照旧回 `custom_tool_call` 的原始字符串 `input`；input 历史里的 `function_call`/`custom_tool_call` 也按同一张表换回上游函数名。`use_responses_lite: true` 的模型（`gpt-6-astra`、`gpt-5.6-*`）不下发顶层 `tools`/`instructions`，全部工具声明裹在 `input[0]` 的 `{"type":"additional_tools","role":"developer","tools":[...]}` 里——它必须当工具表解析、且不能当消息转发，漏掉就等于整份工具表蒸发，模型只能把调用当正文吐出来（`<tool_call><function=functions.exec>`，实测 qwen/deepseek/glm 都这样）。`text.format` 的 json_schema 也要转成 Chat 的嵌套 `{"json_schema":{name,schema,strict}}`，否则上游按未知类型拒掉。
-- **为可测试性保留的接口边界：** `secret.Store`（Keychain vs 内存）与 `proxy.Adapter`（`Compatible` OpenAI 线协议 vs `Anthropic`）。Adapter 实现 `Do(ctx, provider, secret, Request) (*http.Response, error)`。
+- **为可测试性保留的接口边界：** `secret.Store`（Keychain / Credential Manager vs 内存）与 `proxy.Adapter`（`Compatible` OpenAI 线协议 vs `Anthropic`）。Adapter 实现 `Do(ctx, provider, secret, Request) (*http.Response, error)`。
+- **secret 读不到导致的 invalid 会在下次启动自愈；上游 401/403 导致的 invalid 不会。** `Acquire` 读不到 OS 密钥库时写 `last_error = "secret not found in keychain"` 并标 `invalid`；`NewPool.healMissingSecrets` 只对这一种 `last_error` 且 secret 已可再读的行清回 `active`。上游拒绝仍写自己的 `last_error`（如 `upstream rejected the key with status 401`），保持需手动 Reset。没有这层自愈时，Windows 在接入 Credential Manager 之前重启会把整池打成 invalid，代理一直报 `no API key configured for …`，即使密钥已重新可读。
 - **Codex 的模型切换靠 profile 文件，不靠映射表。** 网关的模型映射与 Codex 配置无关：Codex 只把模型名当字符串放进请求体，网关按自己的映射表解析，所以 `gpt-5.6-sol` 之类不需要写进任何 Codex 配置。模型多起来后，切换用 `<CODEX_HOME>/<名>.config.toml` + `codex --profile <名>`（实测 CLI 0.154.0：profile 只写 `model` 与 `model_provider` 两行即可，provider 表从主 `config.toml` 合并，不必重复）。三条实测约束：`--profile` 的名字只接受 `[A-Za-z0-9_-]`（带点如 `gpt-5.6-sol` 直接被拒），所以模型名里的 `.` 与 `/` 必须消毒成 `-`（`codexProfileName`），且消毒有损、名字必须在**全量**可路由列表上去重（`codexProfilePlan`），否则同一模型改勾选后会换名字、在磁盘留下重复文件；生成的 profile 只增不删——目录里还有其它工具留下的成百个文件，按「不在本次选中集合里」去删会误伤它们，认领磁盘文件要靠内容（`model_provider` 指向本网关）而非文件名。
 - **同一个 `multiProvider` 勾选列表在两类工具上语义不同，默认值必须由后端分派。** ai-sdk/pi/omp 类是「配置里列出哪些候选模型」：默认全选只在配置里还没有本网关条目（首次使用）时成立，之后一律从磁盘回读已写入的子集（`Generator.WithBaseline` 读 `provider(s).agent-router.models`，显式清空的空列表也原样保留），否则重开面板退回全选、下一次写入还会把收窄过的清单改回全量；OMP 已存在文件走字节拼接的 `gatewayBody` 也必须用 `g.models()` 而非 `g.routable`，否则拼接路径会静默扩成全量。codex 类是「生成哪些 profile 文件」，默认全选会在用户第一次打开面板时写出几十份文件，因此默认取磁盘现状（`codexProfileModels`），一份都没有时才退到主配置的默认模型，用户显式勾过（`selected` 非 nil）则完全按勾选、包括清空。这与 `SlotBaseline` 同一原则——重开面板必须显示上次写入的结果，否则每次写入都像丢了选择。前端不得自己假定「全选」，要从 `Preview.SelectedModels` 起步。
 - **同一个客户端模型名可以挂多家提供商，构成一条 failover 链。** `model_mappings.client_model` **没有** UNIQUE 约束（旧库在 `storage.OpenPath` 里整表重建去掉，幂等且保留原行与别名），`MappingStore.ResolveAll` 按配置顺序返回整条链，`proxy.resolveRoutes` 把它配上各自的 provider，`Server.withRoute` 依次尝试：一家返回 401/403/429/5xx 就转下一家，健康的那家立即短路（不会重复计费），非可重试的 4xx 描述的是请求本身所以不换家。每家先在链内跑自己那套凭据 failover（`withCredential`，最多 2 把 Key），因此一条 N 家的链最多打 2N 次上游。日志与用量记的是**最终应答的那条路由**（provider、upstream_model、credential），不是链首——同名链上「谁服务了这次请求」必须看得出来。链顺序由 `effectiveMappings` 的稳定排序（`ClientModel` 再 `ID`）保证可复现，UI 卡片上的「同名 1/2」就是这个顺位。`/v1/models`、`EffectiveMappings` 与生成的 CLI 配置按名字**去重**，只暴露一个模型名：几家提供商做后备是内部细节。`Resolve` 只返回链首，留给「一个名字一条映射」的旧调用方（UI 的 `ResolveModel`）。`/v1/messages` 的链按链首的 `Kind` 过滤（Anthropic 透传与 OpenAI 转换两条路径发的是不同线格式），`/v1/responses` 则剔掉链里的 Anthropic 路由，全链都是 Anthropic 才报 501。
@@ -81,7 +82,7 @@ React UI → App 方法（Wails 绑定）
 | `backend/storage/` | SQLite `Open()`，schema 唯一来源（唯一调用 `modernc.org/sqlite` 之处） |
 | `backend/credential/` | 上游凭据池：多 Key 选择策略（`session`/`round_robin`/`least_used`/`random`）、运行期健康状态（冷却/永久失效）、遗留单 Key 认领。`pool.go` 管存储与状态，`selector.go` 管策略与会话指纹 |
 | `backend/proxy/` | HTTP `Server`、`Adapter`、OpenAI 线协议类型；`credential_exec.go` 是取 Key + failover 的执行器（`withCredential` 同一家换 Key，`withRoute` 跨提供商换家）；`resolveRoutes` 的同名链在轮转模式下换起点（逐请求轮转，无会话粘性） |
-| `backend/secret/` | `secret.Store` 接口 + macOS Keychain 实现 |
+| `backend/secret/` | `secret.Store` 接口 + macOS Keychain / Windows Credential Manager 实现 |
 | `backend/usage/` | `SQLiteTracker`（在用）：请求日志、按「维度 × 路由」的用量聚合与 `cost.go` 计费；`tracker.go` 废弃勿用 |
 | `backend/agent/` | `agent.Preset` + 内存 `Store` |
 | `frontend/src/` | React SPA 源码 |

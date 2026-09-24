@@ -192,7 +192,47 @@ func NewPool(db *sql.DB, secrets secret.Store) (*Pool, error) {
 		return nil, err
 	}
 	p.backfillMasks()
+	p.healMissingSecrets()
 	return p, nil
+}
+
+// errSecretMissing is the LastError written when a row's secret cannot be read
+// from the OS store. It is distinct from an upstream 401/403 rejection so heal
+// only revives keys that lost their secret reference, never keys the provider
+// rejected.
+const errSecretMissing = "secret not found in keychain"
+
+// healMissingSecrets reactivates credentials marked invalid solely because
+// their secret was unreadable (process-memory store lost them on restart, a
+// Keychain reset, a restored backup). When the secret is available again the
+// key is fine; upstream-rejected keys keep their own LastError and stay invalid.
+//
+// Without this, a Windows restart before Credential Manager support left every
+// pool row permanently invalid and the proxy reported "no API key configured"
+// even after the secret store was fixed.
+func (p *Pool) healMissingSecrets() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for providerID, items := range p.items {
+		changed := false
+		for i, item := range items {
+			if item.Status != StatusInvalid || item.LastError != errSecretMissing {
+				continue
+			}
+			if _, err := p.secrets.Get(item.secretRef); err != nil {
+				continue
+			}
+			item.Status = StatusActive
+			item.LastError = ""
+			item.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			items[i] = item
+			p.persistLocked(item)
+			changed = true
+		}
+		if changed {
+			p.items[providerID] = items
+		}
+	}
 }
 
 func (p *Pool) load() error {
@@ -550,11 +590,12 @@ func (p *Pool) Acquire(providerID, mode, session string) (Lease, error) {
 	}
 	value, err := p.secrets.Get(chosen.secretRef)
 	if err != nil {
-		// The row outlived its Keychain entry (Keychain reset, restored backup).
-		// Mark it invalid so the pool routes around it instead of failing every
-		// request until an operator notices.
+		// The row outlived its OS-store entry (Keychain reset, restored backup,
+		// or a process-memory store after restart). Mark it invalid so the pool
+		// routes around it; NewPool.healMissingSecrets revives it when the
+		// secret becomes readable again.
 		chosen.Status = StatusInvalid
-		chosen.LastError = "secret not found in keychain"
+		chosen.LastError = errSecretMissing
 		p.replaceLocked(providerID, chosen)
 		p.persistLocked(chosen)
 		p.unbindCredentialLocked(chosen.ID)

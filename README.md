@@ -175,7 +175,10 @@ Anthropic 提供商时会返回 `501`。`previous_response_id` 等依赖服务�
   - Windows：`%AppData%\AgentRouter\agent-router.db`
 - macOS 上，上游 API Key 存在系统 Keychain，服务名为
   `com.agentrouter.credentials`；SQLite 只保存不透明引用和短掩码。
-- 非 macOS 开发环境当前使用进程内存保存上游密钥，应用重启后需要重新填写。
+- Windows 上，上游 API Key 存在凭据管理器（Credential Manager），target 以
+  `com.agentrouter.credentials/` 为前缀；应用重启后仍可读取。
+- 其它没有原生密钥库的平台（例如 Linux 开发环境）当前使用进程内存保存上游
+  密钥，应用重启后需要重新填写。
 - 本地网关密钥需要让本地代理直接校验，因此保存在 SQLite 中。不要共享数据库文件。
 - 监听地址默认为 `127.0.0.1`，只允许本机访问。切换到 `0.0.0.0` 后局域网可直接
   访问网关，请确保网关密钥和设备网络安全。

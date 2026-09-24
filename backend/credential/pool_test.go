@@ -683,3 +683,76 @@ func TestStartupBackfillsMissingMask(t *testing.T) {
 		t.Fatalf("persisted backfill = %q", stored)
 	}
 }
+
+// A key marked invalid only because its secret was unreadable must revive on
+// the next NewPool once the secret is readable again. Upstream-rejected keys
+// (different LastError) must stay invalid.
+func TestNewPoolHealsMissingSecretInvalid(t *testing.T) {
+	pool, secrets, db := newTestPool(t, "test")
+	ids := addKeys(t, pool, "test", 1)
+
+	pool.mu.Lock()
+	ref := pool.items["test"][0].secretRef
+	pool.mu.Unlock()
+	if err := secrets.Delete(ref); err != nil {
+		t.Fatal(err)
+	}
+	// First acquire sees the missing secret and marks the row invalid.
+	if _, err := pool.Acquire("test", string(ModeSession), ""); err == nil {
+		t.Fatal("expected failure when secret is gone")
+	}
+	if got := pool.List("test")[0].Status; got != StatusInvalid {
+		t.Fatalf("status = %q, want %q", got, StatusInvalid)
+	}
+	var lastError string
+	if err := db.QueryRow(`SELECT last_error FROM provider_credentials WHERE id = ?`, ids[0]).Scan(&lastError); err != nil {
+		t.Fatal(err)
+	}
+	if lastError != errSecretMissing {
+		t.Fatalf("last_error = %q, want %q", lastError, errSecretMissing)
+	}
+
+	// Secret returns (e.g. Credential Manager is available again).
+	if err := secrets.Set(ref, "sk-healed123456"); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewPool(db, secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := reopened.List("test")[0]
+	if item.Status != StatusActive {
+		t.Fatalf("status after heal = %q, want %q (last_error=%q)", item.Status, StatusActive, item.LastError)
+	}
+	if item.LastError != "" {
+		t.Fatalf("last_error after heal = %q, want empty", item.LastError)
+	}
+	lease, err := reopened.Acquire("test", string(ModeSession), "")
+	if err != nil {
+		t.Fatalf("acquire after heal: %v", err)
+	}
+	if lease.Secret() != "sk-healed123456" {
+		t.Fatalf("secret = %q", lease.Secret())
+	}
+}
+
+// An upstream-rejected key must not be revived by healMissingSecrets.
+func TestNewPoolDoesNotHealUpstreamRejected(t *testing.T) {
+	pool, secrets, db := newTestPool(t, "test")
+	ids := addKeys(t, pool, "test", 1)
+	pool.Report(ids[0], Attempt{StatusCode: 401})
+	if got := pool.List("test")[0].Status; got != StatusInvalid {
+		t.Fatalf("status = %q, want invalid after 401", got)
+	}
+	// Secret is still present; heal must leave the rejection alone.
+	if _, err := secrets.Get(pool.items["test"][0].secretRef); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewPool(db, secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reopened.List("test")[0].Status; got != StatusInvalid {
+		t.Fatalf("status after reopen = %q, want still invalid", got)
+	}
+}
