@@ -22,7 +22,6 @@ import (
 const (
 	credTypeGeneric         = 1 // CRED_TYPE_GENERIC
 	credPersistLocalMachine = 2 // CRED_PERSIST_LOCAL_MACHINE — survives relogin
-	credWriteFlagUpdate     = 1 // CRED_WRITE_FLAG_UPDATE
 )
 
 var (
@@ -88,7 +87,7 @@ func (s *credStore) Set(account, value string) error {
 	}
 	r, _, callErr := procCredWriteW.Call(
 		uintptr(unsafe.Pointer(cred)),
-		credWriteFlagUpdate,
+		0,
 	)
 	if r == 0 {
 		return callErr
