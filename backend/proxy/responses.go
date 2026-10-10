@@ -711,6 +711,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	// 日志记最终应答的那条路由，failover 后回填。
 	route := routes[0]
 	logEvent := func(success bool, responseBody, errorMessage string, tokens tokenUsage) {
+		if success && turnFiltered(responseBody) {
+			success, errorMessage = false, "content_filter: upstream refused the response"
+		}
 		s.recordPluginOutputStats(pluginDeltas, tokens.Output, success)
 		_ = s.usage.Record(usage.Event{
 			TokenID: tokenID, TokenName: tokenName, ProviderID: route.provider.ID, ProviderName: route.provider.Name,

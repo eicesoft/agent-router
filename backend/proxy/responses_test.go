@@ -602,6 +602,50 @@ func TestResponsesLengthFinishReportsIncomplete(t *testing.T) {
 	}
 }
 
+// 上游把补全拦下来（finish_reason=content_filter）时必须以 incomplete 收尾：回
+// response.completed 等于告诉 Codex「任务完成」，而实际上模型一个字都没回答。
+func TestResponsesContentFilterReportsIncompleteAndLogsFailure(t *testing.T) {
+	s, tracker, _ := responsesFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		for _, frame := range []string{
+			`data: {"choices":[{"delta":{"content":"blocked"}}]}`,
+			`data: {"choices":[{"delta":{},"finish_reason":"content_filter"}],"usage":{"prompt_tokens":7,"completion_tokens":2}}`,
+			`data: [DONE]`,
+		} {
+			_, _ = io.WriteString(w, frame+"\n\n")
+			flusher.Flush()
+		}
+	})
+
+	response := postResponses(t, s, `{"model":"codex-model","stream":true,"input":[]}`)
+	body := response.Body.String()
+	if strings.Contains(body, `"type":"response.completed"`) {
+		t.Fatalf("content_filter must not report completion: %s", body)
+	}
+	payloads := ssePayloads(t, body)
+	last := payloads[len(payloads)-1]
+	if last["type"] != "response.incomplete" {
+		t.Fatalf("last event = %v: %v", last["type"], eventTypes(payloads))
+	}
+	envelope := last["response"].(map[string]any)
+	details := envelope["incomplete_details"].(map[string]any)
+	if details["reason"] != "content_filter" {
+		t.Fatalf("incomplete reason = %v", details["reason"])
+	}
+
+	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs.Items) != 1 {
+		t.Fatalf("want 1 logged request, got %d", len(logs.Items))
+	}
+	if logs.Items[0].Success || !strings.Contains(logs.Items[0].ErrorMessage, "content_filter") {
+		t.Fatalf("filtered turn logged as successful: %+v", logs.Items[0])
+	}
+}
+
 // 推理内容转成 Codex 认的 reasoning summary 事件。Codex 的
 // reasoning_summary_text.delta 要求带 summary_index，且需先有 part.added。
 func TestResponsesStreamsReasoningSummary(t *testing.T) {

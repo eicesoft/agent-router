@@ -259,11 +259,17 @@ func responsesEnvelope(id, model, status string, items []responsesItem, usage ma
 }
 
 // responsesTerminal 生成正常或截断的终态 response。Codex 只在 completed 时结束回合；
-// 达到输出上限必须报 incomplete，否则它会误以为任务正常收尾。
+// 达到输出上限必须报 incomplete，否则它会误以为任务正常收尾。content_filter 同理：
+// 上游把这次补全拦掉了，回 completed 等于告诉客户端任务完成。
 func responsesTerminal(id, model, finishReason string, items []responsesItem, usage map[string]any) map[string]any {
-	if finishReason == "length" {
+	switch finishReason {
+	case "length":
 		envelope := responsesEnvelope(id, model, "incomplete", items, usage)
 		envelope["incomplete_details"] = map[string]any{"reason": "max_output_tokens"}
+		return envelope
+	case "content_filter":
+		envelope := responsesEnvelope(id, model, "incomplete", items, usage)
+		envelope["incomplete_details"] = map[string]any{"reason": "content_filter"}
 		return envelope
 	}
 	return responsesEnvelope(id, model, "completed", items, usage)

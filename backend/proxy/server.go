@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -448,6 +449,9 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	// 日志记的是最终应答的那条路由，解析完成前先用链首占位。
 	route := routes[0]
 	logEvent := func(success bool, responseBody, errorMessage string, tokens tokenUsage) {
+		if success && turnFiltered(responseBody) {
+			success, errorMessage = false, "content_filter: upstream refused the response"
+		}
 		s.recordPluginOutputStats(pluginDeltas, tokens.Output, success)
 		_ = s.usage.Record(usage.Event{
 			TokenID: tokenID, TokenName: tokenName, ProviderID: route.provider.ID, ProviderName: route.provider.Name,
@@ -597,6 +601,9 @@ func (s *Server) messagesHandler(w http.ResponseWriter, r *http.Request) {
 	// 日志记最终应答的那条路由；下游 handler 在 failover 之后回填。
 	route := routes[0]
 	logEvent := func(success bool, responseBody, errorMessage string, tokens tokenUsage) {
+		if success && turnFiltered(responseBody) {
+			success, errorMessage = false, "content_filter: upstream refused the response"
+		}
 		s.recordPluginOutputStats(pluginDeltas, tokens.Output, success)
 		_ = s.usage.Record(usage.Event{
 			TokenID: tokenID, TokenName: tokenName, ProviderID: route.provider.ID, ProviderName: route.provider.Name,
@@ -1109,6 +1116,8 @@ func openAIResponseToAnthropic(data []byte, clientModel string) AnthropicRespons
 			resp.StopReason = "max_tokens"
 		case "tool_calls":
 			resp.StopReason = "tool_use"
+		case "content_filter":
+			resp.StopReason = "refusal"
 		}
 	}
 
@@ -1467,9 +1476,25 @@ func mapFinishReason(r string) string {
 		return "max_tokens"
 	case "tool_calls":
 		return "tool_use"
+	case "content_filter":
+		// Anthropic 的 stop_reason 枚举里没有 content_filter，直接透传会给出一个
+		// 客户端解析不了的值；refusal 是它表示「被安全策略拦下」的合法取值。
+		return "refusal"
 	default:
 		return r
 	}
+}
+
+// filteredTurnPattern 匹配三种协议里「这次补全被上游安全过滤拦下」的字段：OpenAI 的
+// finish_reason content_filter、转换后 Anthropic 侧的 stop_reason refusal、以及
+// Responses 的 incomplete_details reason。三者都是协议字段，模型正文里的同名词早已被
+// JSON 转义成 \"…\"，不会撞上。
+var filteredTurnPattern = regexp.MustCompile(
+	`"finish_reason"\s*:\s*"content_filter"|"stop_reason"\s*:\s*"refusal"|"reason"\s*:\s*"content_filter"`)
+
+// turnFiltered 判断即将落日志的响应体是否以被过滤的回合收尾。
+func turnFiltered(responseBody string) bool {
+	return filteredTurnPattern.MatchString(responseBody)
 }
 
 func mustJSON(v any) string {
