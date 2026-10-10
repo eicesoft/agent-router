@@ -1,12 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  Button,
-  Input,
-  Label,
-  Switch,
-  TextField,
-  Tooltip,
-} from "@heroui/react";
+import { Button, Input, Label, Switch, TextField, Tooltip } from "./ui";
 import { Check, Plus, RotateCcw, Trash2 } from "lucide-react";
 import {
   addProviderCredential,

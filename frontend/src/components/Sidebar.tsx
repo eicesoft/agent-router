@@ -14,7 +14,7 @@ import {
   SlidersHorizontal,
   SquareTerminal,
 } from "lucide-react";
-import { Button, Tooltip } from "@heroui/react";
+import { Button, Tooltip } from "./ui";
 
 export type Page =
   | "overview"

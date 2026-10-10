@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Modal, TextField, Input, Label, Tooltip } from "@heroui/react";
+import { Button, Modal, TextField, Input, Label, Tooltip } from "./ui";
 import {
   AudioLines,
   Brain,

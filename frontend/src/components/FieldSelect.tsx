@@ -6,7 +6,7 @@ import {
   SearchField,
   Select,
   Tooltip,
-} from "@heroui/react";
+} from "./ui";
 import type { ReactNode } from "react";
 
 export type SelectOption<T extends string> = {

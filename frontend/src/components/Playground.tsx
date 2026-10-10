@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Label, Popover, Slider } from "@heroui/react";
+import { Label, Popover, Slider } from "./ui";
 import {
   Brain,
   Check,

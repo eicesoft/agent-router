@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+} from "react";
 import {
   Button,
   Card,
@@ -16,7 +25,7 @@ import {
   TagGroup,
   TextField,
   Tooltip,
-} from "@heroui/react";
+} from "./components/ui";
 import {
   Activity,
   ArrowDownRight,
@@ -47,6 +56,7 @@ import {
 } from "lucide-react";
 import {
   bootstrap,
+  clearUsageData,
   deleteLocalAPIKey,
   deleteProvider,
   exportLocalAPIKeyEnv,
@@ -230,6 +240,8 @@ export default function App() {
   // 注册到这里，头部按钮直接调用。
   const playgroundReset = useRef<(() => void) | null>(null);
   const [playgroundHasContent, setPlaygroundHasContent] = useState(false);
+  // 使用情况页同理：清除入口在页面头部，弹窗与状态归 UsagePanel 持有。
+  const usageClear = useRef<(() => void) | null>(null);
   const [data, setData] = useState<Bootstrap | null>(null);
   // Skills 页自取数据（文件系统扫描），这里只留一个用于侧栏的可用计数，
   // 面板每次 reload 后回填，保证开关/删除后数字跟着变。
@@ -678,23 +690,37 @@ export default function App() {
               size="sm"
               isIconOnly
               variant="ghost"
-              className="provider-add"
+              className="header-icon"
               aria-label="添加提供商"
               onPress={() => setEditingProvider(null)}
             >
               <Plus size={15} />
             </Button>
           )}
-          {page === "playground" && (
-            <button
-              type="button"
-              className="playground-clear"
-              aria-label="清空对话"
-              disabled={!playgroundHasContent}
-              onClick={() => playgroundReset.current?.()}
+          {page === "usage" && (
+            <Button
+              size="sm"
+              isIconOnly
+              variant="ghost"
+              className="header-icon"
+              aria-label="清除数据"
+              onPress={() => usageClear.current?.()}
             >
-              <Trash2 size={16} />
-            </button>
+              <Trash2 size={15} />
+            </Button>
+          )}
+          {page === "playground" && (
+            <Button
+              size="sm"
+              isIconOnly
+              variant="ghost"
+              className="header-icon"
+              aria-label="清空对话"
+              isDisabled={!playgroundHasContent}
+              onPress={() => playgroundReset.current?.()}
+            >
+              <Trash2 size={15} />
+            </Button>
           )}
         </header>
         <div className="page-scroll">
@@ -713,7 +739,11 @@ export default function App() {
               onSettingsChange={(settings) => setData({ ...data, settings })}
             />
           ) : page === "usage" ? (
-            <UsagePanel />
+            <UsagePanel
+              onRegisterClear={(open) => {
+                usageClear.current = open;
+              }}
+            />
           ) : page === "providers" ? (
             <Providers
               providers={data.providers}
@@ -1738,7 +1768,7 @@ function RequestLogs({
 function pageWindow(page: number, total: number): (number | null)[] {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
   const pages = new Set<number>([1, total]);
-  for (let n = page - 1; n <= page + 1; n++) {
+  for (let n = page - 2; n <= page + 2; n++) {
     if (n >= 2 && n <= total - 1) pages.add(n);
   }
   const sorted = [...pages].sort((a, b) => a - b);
@@ -1752,11 +1782,40 @@ function pageWindow(page: number, total: number): (number | null)[] {
 // Backend returns model stats ordered by request count, so the panel keeps the
 // most-used few instead of growing without bound as one-off models accumulate.
 const MODEL_USAGE_LIMIT = 6;
-function UsagePanel() {
+function UsagePanel({
+  onRegisterClear,
+}: {
+  // 头部按钮由 App 渲染，这里把打开确认弹窗的动作注册上去。
+  onRegisterClear: (open: (() => void) | null) => void;
+}) {
   const [breakdown, setBreakdown] = useState<UsageBreakdown | null>(null);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState("");
+  const loadBreakdown = useCallback(
+    () => getUsageBreakdown().then(setBreakdown),
+    [],
+  );
   useEffect(() => {
-    getUsageBreakdown().then(setBreakdown);
-  }, []);
+    void loadBreakdown();
+  }, [loadBreakdown]);
+  useEffect(() => {
+    onRegisterClear(() => setClearOpen(true));
+    return () => onRegisterClear(null);
+  }, [onRegisterClear]);
+  const clear = async () => {
+    setClearing(true);
+    setClearError("");
+    try {
+      await clearUsageData();
+      setClearOpen(false);
+      await loadBreakdown();
+    } catch (err) {
+      setClearError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setClearing(false);
+    }
+  };
   if (!breakdown) return <div className="loading">正在加载使用情况…</div>;
   const totals = breakdown.providers.reduce(
     (acc, p) => ({
@@ -1904,6 +1963,52 @@ function UsagePanel() {
           </Card.Content>
         </Card>
       </div>
+      <Modal
+        isOpen={clearOpen}
+        onOpenChange={(isOpen: boolean) => {
+          if (!isOpen && !clearing) {
+            setClearOpen(false);
+            setClearError("");
+          }
+        }}
+      >
+        <Modal.Backdrop>
+          <Modal.Container size="sm">
+            <Modal.Dialog>
+              <Modal.Header>
+                <Modal.Heading>清除数据？</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body>
+                <p>
+                  将删除全部请求日志与用量统计（含每条请求与响应的完整正文），并整理数据库回收磁盘占用。此操作不可撤销。
+                </p>
+                <p>
+                  数据量大时整理需要数分钟，期间网关仍可转发请求，但这些请求的日志可能写入失败。
+                </p>
+                {clearError && <p className="settings-error">{clearError}</p>}
+              </Modal.Body>
+              <Modal.Footer>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onPress={() => setClearOpen(false)}
+                  isDisabled={clearing}
+                >
+                  取消
+                </Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  isDisabled={clearing}
+                  onPress={() => void clear()}
+                >
+                  {clearing ? "清除中…" : "清除"}
+                </Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal>
     </section>
   );
 }
@@ -2150,7 +2255,9 @@ function Overview({
                     {tooltip ? (
                       <Tooltip>
                         <Tooltip.Trigger>
-                          <strong className="metric-token-value">{value}</strong>
+                          <strong className="metric-token-value">
+                            {value}
+                          </strong>
                         </Tooltip.Trigger>
                         <Tooltip.Content>{tooltip}</Tooltip.Content>
                       </Tooltip>
@@ -2162,7 +2269,9 @@ function Overview({
                         className={`metric-note ${noteClass}`.trim()}
                         title={noteLabel ? `${noteLabel} ${note}` : undefined}
                       >
-                        {noteLabel && <span className="sr-only">{noteLabel} </span>}
+                        {noteLabel && (
+                          <span className="sr-only">{noteLabel} </span>
+                        )}
                         {note}
                       </small>
                     )}
@@ -3412,31 +3521,11 @@ function AgentTemplates({
                   <Tabs.Panel id="diff">
                     <div className="agent-config-tab-content agent-diff-tab">
                       {configuring && (
-                        <div className="diff-split">
-                          <div className="diff-pane">
-                            <div className="diff-pane-label">
-                              当前配置
-                              {configuring.exists ? "" : "（文件不存在）"}
-                            </div>
-                            <pre className="diff-code">
-                              {renderDiff(
-                                configuring.current,
-                                configuring.content,
-                                "old",
-                              )}
-                            </pre>
-                          </div>
-                          <div className="diff-pane">
-                            <div className="diff-pane-label">生成配置</div>
-                            <pre className="diff-code">
-                              {renderDiff(
-                                configuring.current,
-                                configuring.content,
-                                "new",
-                              )}
-                            </pre>
-                          </div>
-                        </div>
+                        <AgentDiffSplit
+                          current={configuring.current}
+                          next={configuring.content}
+                          exists={configuring.exists}
+                        />
                       )}
                     </div>
                   </Tabs.Panel>
@@ -3475,6 +3564,175 @@ function AgentTemplates({
         onClose={() => setSkillsToolId(null)}
       />
     </section>
+  );
+}
+
+// AgentDiffSplit renders the side-by-side diff. The split keeps native
+// scrolling as the single source of truth (its own scrollbar is hidden by
+// CSS); a shared thumb sits in the gutter between the panes and mirrors /
+// drives scrollTop, so both panes always scroll together.
+function AgentDiffSplit({
+  current,
+  next,
+  exists,
+}: {
+  current: string;
+  next: string;
+  exists: boolean;
+}) {
+  const splitRef = useRef<HTMLDivElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const thumbRef = useRef<HTMLDivElement>(null);
+
+  const update = useCallback(() => {
+    const el = splitRef.current;
+    const track = trackRef.current;
+    const thumb = thumbRef.current;
+    if (!el || !track || !thumb) return;
+    const maxScroll = el.scrollHeight - el.clientHeight;
+    const trackH = track.clientHeight;
+    if (maxScroll <= 1) {
+      track.dataset.scrollable = "false";
+      return;
+    }
+    track.dataset.scrollable = "true";
+    const thumbH = Math.max(24, (el.clientHeight / el.scrollHeight) * trackH);
+    const top = (el.scrollTop / maxScroll) * (trackH - thumbH);
+    thumb.style.height = `${Math.round(thumbH)}px`;
+    thumb.style.transform = `translateY(${Math.round(top)}px)`;
+    thumb.setAttribute(
+      "aria-valuenow",
+      String(Math.round((el.scrollTop / maxScroll) * 100)),
+    );
+  }, []);
+
+  useEffect(() => {
+    const el = splitRef.current;
+    const track = trackRef.current;
+    if (!el || !track) return;
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    ro.observe(track);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
+  }, [update, current, next]);
+
+  const onThumbPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const el = splitRef.current;
+    const track = trackRef.current;
+    const thumb = e.currentTarget;
+    if (!el || !track || e.button !== 0) return;
+    const startY = e.clientY;
+    const startScroll = el.scrollTop;
+    const denom = track.clientHeight - thumb.offsetHeight;
+    if (denom <= 0) return;
+    const maxScroll = el.scrollHeight - el.clientHeight;
+    const onMove = (ev: PointerEvent) => {
+      el.scrollTop = startScroll + ((ev.clientY - startY) / denom) * maxScroll;
+    };
+    const onUp = () => {
+      thumb.removeEventListener("pointermove", onMove);
+      thumb.removeEventListener("pointerup", onUp);
+      thumb.removeEventListener("pointercancel", onUp);
+    };
+    thumb.setPointerCapture(e.pointerId);
+    thumb.addEventListener("pointermove", onMove);
+    thumb.addEventListener("pointerup", onUp);
+    thumb.addEventListener("pointercancel", onUp);
+    e.preventDefault();
+  };
+
+  const onTrackPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    // 点在 thumb 上时交给 thumb 自己的拖拽 handler。
+    if (e.target !== e.currentTarget) return;
+    const el = splitRef.current;
+    const thumb = thumbRef.current;
+    if (!el || !thumb) return;
+    const denom = e.currentTarget.clientHeight - thumb.offsetHeight;
+    if (denom <= 0) return;
+    const y =
+      e.clientY -
+      e.currentTarget.getBoundingClientRect().top -
+      thumb.offsetHeight / 2;
+    el.scrollTop = (y / denom) * (el.scrollHeight - el.clientHeight);
+  };
+
+  const onTrackWheel = (e: ReactWheelEvent<HTMLDivElement>) => {
+    const el = splitRef.current;
+    if (el) el.scrollTop += e.deltaY;
+  };
+
+  const onThumbKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const el = splitRef.current;
+    if (!el) return;
+    const page = el.clientHeight * 0.9;
+    switch (e.key) {
+      case "ArrowUp":
+        el.scrollTop -= 40;
+        break;
+      case "ArrowDown":
+        el.scrollTop += 40;
+        break;
+      case "PageUp":
+        el.scrollTop -= page;
+        break;
+      case "PageDown":
+        el.scrollTop += page;
+        break;
+      case "Home":
+        el.scrollTop = 0;
+        break;
+      case "End":
+        el.scrollTop = el.scrollHeight;
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+  };
+
+  return (
+    <>
+      <div className="diff-split" id="agent-diff-split" ref={splitRef}>
+        <div className="diff-pane">
+          <div className="diff-pane-label">
+            当前配置
+            {exists ? "" : "（文件不存在）"}
+          </div>
+          <pre className="diff-code">{renderDiff(current, next, "old")}</pre>
+        </div>
+        <div className="diff-pane">
+          <div className="diff-pane-label">生成配置</div>
+          <pre className="diff-code">{renderDiff(current, next, "new")}</pre>
+        </div>
+      </div>
+      <div
+        className="diff-scroll-track"
+        ref={trackRef}
+        onPointerDown={onTrackPointerDown}
+        onWheel={onTrackWheel}
+      >
+        <div
+          className="diff-scroll-thumb"
+          ref={thumbRef}
+          role="scrollbar"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-controls="agent-diff-split"
+          aria-label="配置对比"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={0}
+          onPointerDown={onThumbPointerDown}
+          onKeyDown={onThumbKeyDown}
+        />
+      </div>
+    </>
   );
 }
 

@@ -1,5 +1,7 @@
 @import "tailwindcss";
-@import "@heroui/styles";
+/* 原 @import "@heroui/styles"：heroui 依赖已移除，组件基础样式改为适配层
+   目录下的手写 base.css，引入位置不变以保持层叠顺序。 */
+@import "./components/ui/base.css";
 
 :root {
   font-family:
@@ -561,16 +563,23 @@ header {
   /* 下边距 padding 33 → 23（-10px），margin 10 不变。 */
   padding: 0 28px 23px;
   margin-bottom: 10px;
-  /* 标题行内有开关/按钮，默认不可拖；仅标题文字块开拖。 */
+  /* 标题行整片可拖动窗口（标题文字之间的空白也能拖）；行内开关/按钮在下方
+     标回 no-drag。 */
+  --wails-draggable: drag;
+}
+/* --wails-draggable 会被子元素继承，而 Wails 只按 mousedown 目标的计算值判断
+   是否开拖，所以拖拽区里的控件必须显式退出，否则点击会被拖动吞掉（与
+   .sidebar/.icon-rail 的处置相同）。 */
+header button,
+header .proxy-toggle {
   --wails-draggable: no-drag;
 }
-/* 标题与副标题同行展示；整块可拖动窗口。 */
+/* 标题与副标题同行展示（拖动沿用 header 的拖拽区）。 */
 header > div:first-child {
   display: flex;
   align-items: baseline;
   gap: 10px;
   min-width: 0;
-  --wails-draggable: drag;
 }
 /* 页面主体的滚动容器。列方向 flex 让 .request-log-panel / .playground 这类
    自管理滚动的页面仍能撑满剩余高度。 */
@@ -625,41 +634,8 @@ h1 {
   font-size: 12px;
   font-weight: 600;
 }
-/* 演练场的清空控件是裸按钮（不是 HeroUI Button），图标尺寸与标题行对齐。 */
-.playground-clear {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted-3);
-  cursor: pointer;
-  transition: 0.15s ease;
-}
-.playground-clear:hover:not(:disabled) {
-  background: var(--hover-fill);
-  color: var(--ink-soft);
-}
-.playground-clear:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-/* 页头文字按钮（添加提供商等已是 icon 按钮，走 .provider-add）。 */
-header [data-slot="button"]:not(.provider-add) {
-  min-width: 126px !important;
-  white-space: nowrap !important;
-  background: var(--selected-bg) !important;
-  color: #fff !important;
-  border-radius: 8px !important;
-  font-size: 13px !important;
-  font-weight: 600 !important;
-  box-shadow: none !important;
-  height: 40px !important;
-  padding: 0 15px !important;
-}
+/* 页头右侧动作统一为 icon 按钮（提供商新增、使用情况清除、演练场清空），
+   尺寸与着色见 .header-icon。 */
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(140px, 1fr));
@@ -1293,9 +1269,9 @@ code {
 .provider-list {
   max-width: 1050px;
 }
-/* 与下方卡片编辑按钮同源（HeroUI ghost sm icon），尺寸 ×1.15：
+/* 页头 icon 按钮，与卡片编辑/删除按钮同源（ghost sm icon），尺寸 ×1.15：
    36→41 / md 32→37，图标 16→18。 */
-.provider-add {
+.header-icon {
   width: 41px !important;
   min-width: 41px !important;
   height: 41px !important;
@@ -1303,13 +1279,13 @@ code {
   border-radius: 8px !important;
 }
 @media (min-width: 768px) {
-  .provider-add {
+  .header-icon {
     width: 37px !important;
     min-width: 37px !important;
     height: 37px !important;
   }
 }
-.provider-add svg {
+.header-icon svg {
   width: 18px !important;
   height: 18px !important;
 }
@@ -2472,8 +2448,14 @@ code {
   opacity: 0;
   pointer-events: none;
 }
-.request-log-filters .date-range-picker__popover {
-  min-width: 480px;
+/* 弹层里两个月并排，每月 252px（沿用 heroui 日历的月宽 w-63）。弹层宽度由
+   base.css 的 fit-content 自适应，因此不再需要固定 min-width。 */
+.request-log-filters .date-range-calendars {
+  display: flex;
+  gap: 8px;
+}
+.request-log-filters .date-range-month {
+  width: 252px;
 }
 .request-log-filters .select__trigger {
   min-height: 30px;
@@ -3341,12 +3323,63 @@ html.dark .json-block {
   max-height: none;
   min-height: 0;
 }
+.agent-diff-tab {
+  /* 中缝共享滚动条（.diff-scroll-track）的定位基准。 */
+  position: relative;
+}
 .agent-diff-tab .diff-split {
   height: 100%;
   margin-top: 0;
+  /* 加宽中缝，给共享滚动条留出轨道。 */
+  gap: 16px;
   grid-auto-rows: max-content;
   overflow-x: hidden;
   overflow-y: auto;
+  /* 原生滚动条隐藏，改由中缝 thumb 呈现（webkit 走下方单独规则）。 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.agent-diff-tab .diff-split::-webkit-scrollbar {
+  display: none;
+}
+.agent-diff-tab .diff-scroll-track {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* 两列等宽，中缝中心恰在 50%；轨道宽度与 gap 一致，正好落在缝隙内。 */
+  left: 50%;
+  width: 16px;
+  transform: translateX(-50%);
+}
+.agent-diff-tab .diff-scroll-thumb {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  left: 4px;
+  display: none;
+  min-height: 24px;
+  border-radius: 999px;
+  background: var(--scroll-thumb);
+  cursor: grab;
+  opacity: 0.55;
+  touch-action: none;
+  transition: opacity 0.15s ease;
+}
+.agent-diff-tab .diff-scroll-track[data-scrollable="true"] .diff-scroll-thumb {
+  display: block;
+}
+@media (hover: hover) {
+  .agent-diff-tab .diff-scroll-thumb:hover {
+    opacity: 1;
+  }
+}
+.agent-diff-tab .diff-scroll-thumb:active {
+  cursor: grabbing;
+  opacity: 1;
+}
+.agent-diff-tab .diff-scroll-thumb:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-mark) 55%, transparent);
+  outline-offset: 1px;
 }
 .agent-diff-tab .diff-pane {
   display: block;
@@ -3629,7 +3662,6 @@ html.dark .rail-logo {
 }
 html.dark .rail-action.selected,
 html.dark .create-button,
-html.dark header [data-slot="button"]:not(.provider-add),
 html.dark .tool-template-write {
   color: #14151a !important;
 }
