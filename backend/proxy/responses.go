@@ -330,7 +330,11 @@ func responsesItemToChat(raw json.RawMessage, plan *toolPlan) (Message, bool) {
 		if role == "developer" {
 			role = "system"
 		}
-		return Message{Role: role, Content: responsesContentToChat(item.Content)}, true
+		content := responsesContentToChat(item.Content)
+		if role == "assistant" {
+			content = stripRawToolCallContent(content)
+		}
+		return Message{Role: role, Content: content}, true
 
 	case "function_call", "custom_tool_call":
 		// 历史里的调用记的是 Codex 侧的名字，必须换回下发给上游的函数名，否则上游
@@ -358,6 +362,33 @@ func responsesItemToChat(raw json.RawMessage, plan *toolPlan) (Message, bool) {
 		return Message{Role: "tool", ToolCallID: item.CallID, Content: jsonString(functionOutputText(item.Output))}, true
 	}
 	return Message{}, false
+}
+
+// stripRawToolCallContent 清理历史 assistant 消息里的重复工具调用标记。已经污染的
+// 会话若不清理，模型会继续照正文里的标记模仿，而不是调用原生工具。
+func stripRawToolCallContent(raw json.RawMessage) json.RawMessage {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return jsonString(stripRawToolCalls(text))
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &parts) != nil {
+		return raw
+	}
+	changed := false
+	for i := range parts {
+		if stripped := stripRawToolCalls(parts[i].Text); stripped != parts[i].Text {
+			parts[i].Text = stripped
+			changed = true
+		}
+	}
+	if !changed {
+		return raw
+	}
+	return json.RawMessage(mustJSON(parts))
 }
 
 // responsesContentToChat 把 Responses 的 content 数组转成 Chat 的 content。全是

@@ -14,6 +14,17 @@ import (
 // Responses 协议对不同类型的 item 用不同字段，且我们只发自己构造的少数几种。
 type responsesItem map[string]any
 
+const rawToolCallMarker = "<tool_call"
+
+// stripRawToolCalls 去掉模型写进正文的重复工具调用标记。原生 tool_calls 才是
+// Codex 的执行入口；同一轮正文里的原始标记只会被当普通文本展示。
+func stripRawToolCalls(text string) string {
+	if i := strings.Index(text, rawToolCallMarker); i >= 0 {
+		return text[:i]
+	}
+	return text
+}
+
 // streamAccumulator 累积一次上游流里的正文、推理内容与工具调用，最后组装成
 // Responses 的 output item 数组。
 //
@@ -32,6 +43,7 @@ type streamAccumulator struct {
 	reasoning strings.Builder
 	calls     map[int]*openAIToolCall
 	order     []int
+	streamed  int
 
 	textID      string
 	reasoningID string
@@ -55,6 +67,52 @@ func (a *streamAccumulator) reasoningItemID() string {
 		a.reasoningID = newItemID("rs")
 	}
 	return a.reasoningID
+}
+
+// writeText 追加一帧正文，并只放行确定不是原始工具调用前缀的部分。标记可能被
+// 拆进多帧，所以每次最多保留 marker 长度减一的尾部。
+func (a *streamAccumulator) writeText(delta string) string {
+	a.text.WriteString(delta)
+	text := a.text.String()
+	safeEnd := strings.Index(text, rawToolCallMarker)
+	if safeEnd < 0 {
+		safeEnd = len(text)
+		for prefixLen := min(len(rawToolCallMarker)-1, len(text)); prefixLen > 0; prefixLen-- {
+			if strings.HasSuffix(text, rawToolCallMarker[:prefixLen]) {
+				safeEnd -= prefixLen
+				break
+			}
+		}
+	}
+	if safeEnd < a.streamed {
+		safeEnd = a.streamed
+	}
+	if safeEnd > len(text) {
+		safeEnd = len(text)
+	}
+	out := text[a.streamed:safeEnd]
+	a.streamed = safeEnd
+	return out
+}
+
+// flushText 在流结束时补发尾部。若原生工具调用已出现，正文里的重复标记直接丢弃；
+// 否则保留原样，避免误删用户要求模型讨论的标记文本。
+func (a *streamAccumulator) flushText() string {
+	final := a.messageText()
+	if a.streamed > len(final) {
+		a.streamed = len(final)
+	}
+	out := final[a.streamed:]
+	a.streamed = len(final)
+	return out
+}
+
+func (a *streamAccumulator) messageText() string {
+	text := a.text.String()
+	if len(a.calls) == 0 {
+		return text
+	}
+	return stripRawToolCalls(text)
 }
 
 func (a *streamAccumulator) addToolCalls(raw json.RawMessage) {
@@ -90,7 +148,7 @@ func (a *streamAccumulator) items(plan *toolPlan) []responsesItem {
 			"summary": []any{map[string]any{"type": "summary_text", "text": text}},
 		})
 	}
-	if text := a.text.String(); text != "" {
+	if text := a.messageText(); text != "" {
 		items = append(items, responsesItem{
 			"type": "message", "id": a.textItemID(), "role": "assistant",
 			"content": []any{map[string]any{"type": "output_text", "text": text}},
@@ -369,7 +427,8 @@ func pipeChatStreamToResponses(w io.Writer, body io.ReadCloser, clientModel stri
 			flush()
 		}
 		if choice.Delta.Content != "" {
-			if !textStarted {
+			delta := acc.writeText(choice.Delta.Content)
+			if delta != "" && !textStarted {
 				textStarted = true
 				// 第一条正文 delta 之前必须宣告 item，否则 Codex 报
 				// 「OutputTextDelta without active item」并丢掉 delta（流式逐字
@@ -379,11 +438,12 @@ func pipeChatStreamToResponses(w io.Writer, body io.ReadCloser, clientModel stri
 					"item": textItemSkeleton(acc.textItemID()),
 				})
 			}
-			acc.text.WriteString(choice.Delta.Content)
-			responsesSSE(dest, map[string]any{
-				"type": "response.output_text.delta", "delta": choice.Delta.Content,
-			})
-			flush()
+			if delta != "" {
+				responsesSSE(dest, map[string]any{
+					"type": "response.output_text.delta", "delta": delta,
+				})
+				flush()
+			}
 		}
 		if len(choice.Delta.ToolCalls) > 0 {
 			acc.addToolCalls(choice.Delta.ToolCalls)
@@ -401,6 +461,20 @@ func pipeChatStreamToResponses(w io.Writer, body io.ReadCloser, clientModel stri
 		writeResponsesFailure(dest, responseID, clientModel, "upstream stream ended without a finish_reason")
 		flush()
 		return usage, fmt.Errorf("upstream stream ended without a finish_reason")
+	}
+
+	if delta := acc.flushText(); delta != "" {
+		if !textStarted {
+			textStarted = true
+			responsesSSE(dest, map[string]any{
+				"type": "response.output_item.added",
+				"item": textItemSkeleton(acc.textItemID()),
+			})
+		}
+		responsesSSE(dest, map[string]any{
+			"type": "response.output_text.delta", "delta": delta,
+		})
+		flush()
 	}
 
 	// 收尾：正文与推理的 item 在流式阶段已经宣告过，这里只补 done；工具调用因为
