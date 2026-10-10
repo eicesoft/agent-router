@@ -10,6 +10,10 @@ export function CancelPlayground() {
   return window['go']['main']['App']['CancelPlayground']();
 }
 
+export function ClearUsageData() {
+  return window['go']['main']['App']['ClearUsageData']();
+}
+
 export function DeleteLocalAPIKey(arg1) {
   return window['go']['main']['App']['DeleteLocalAPIKey'](arg1);
 }
