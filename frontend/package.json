@@ -10,10 +10,8 @@
     "formatter": "prettier --write ."
   },
   "dependencies": {
-    "@heroui/react": "^3.2.5",
-    "@heroui/styles": "^3.2.5",
+    "@internationalized/date": "^3.12.4",
     "dompurify": "^3.4.15",
-    "framer-motion": "^12.0.0",
     "lucide-react": "^0.468.0",
     "marked": "^18.0.13",
     "react": "^19.3.0",

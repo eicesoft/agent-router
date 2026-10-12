@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Modal, Switch, Tooltip } from "@heroui/react";
+import { Button, Modal, Switch, Tooltip } from "./ui";
 import {
   Check,
   Copy,

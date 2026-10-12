@@ -1761,3 +1761,138 @@ func TestLargeRequestBodyIsForwardedAndOversizeIsExplained(t *testing.T) {
 		t.Fatalf("oversize error does not name the limit: %s", response.Body.String())
 	}
 }
+
+// pi 这类 OpenAI 客户端靠 finish_reason 识别被上游安全过滤拦下的回合：网关必须原样
+// 透传，同时这条请求按失败入账，否则用量页的成功率把「模型根本没回答」记成正常完成。
+func TestContentFilterFinishPassesThroughAndLogsFailure(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"chatcmpl-cf","object":"chat.completion","created":1,"model":"upstream-model","choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"content_filter"}],"usage":{"prompt_tokens":3,"completion_tokens":0,"total_tokens":3}}`)
+	}))
+	defer upstream.Close()
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry, err := provider.NewRegistry(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mappings, err := config.NewMappingStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"client-model","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer ar-local")
+	response := httptest.NewRecorder()
+	s.chatCompletions(response, req)
+
+	if !strings.Contains(response.Body.String(), `"finish_reason":"content_filter"`) {
+		t.Fatalf("content_filter not passed through to the client: %s", response.Body.String())
+	}
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs.Items) != 1 {
+		t.Fatalf("want 1 logged request, got %d", len(logs.Items))
+	}
+	if logs.Items[0].Success || !strings.Contains(logs.Items[0].ErrorMessage, "content_filter") {
+		t.Fatalf("filtered turn logged as successful: %+v", logs.Items[0])
+	}
+}
+
+// Claude Code 走 /v1/messages：Anthropic 的 stop_reason 枚举里没有 content_filter，
+// 必须换算成 refusal，否则客户端拿到一个解析不了的值。
+func TestContentFilterBecomesAnthropicRefusal(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		for _, frame := range []string{
+			`data: {"choices":[{"delta":{"content":"blocked"},"finish_reason":null}]}`,
+			`data: {"choices":[{"delta":{},"finish_reason":"content_filter"}],"usage":{"prompt_tokens":3,"completion_tokens":1}}`,
+			`data: [DONE]`,
+		} {
+			_, _ = io.WriteString(w, frame+"\n\n")
+			flusher.Flush()
+		}
+	}))
+	defer upstream.Close()
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	registry, err := provider.NewRegistry(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = registry.Save(provider.Provider{ID: "test", Name: "Test", Kind: provider.KindCompatible, BaseURL: upstream.URL, APIKeyRef: "provider/test", Models: []string{"upstream-model"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mappings, err := config.NewMappingStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mappings.Save(config.ModelMapping{ID: "test-map", ClientModel: "client-model", ProviderID: "test", UpstreamModel: "upstream-model", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(db, registry, mappings, fakeSecrets{"provider/test": "sk-test"}, usage.NewSQLiteTracker(db), fakeKeys{valid: "ar-local"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"client-model","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-api-key", "ar-local")
+	response := httptest.NewRecorder()
+	s.messagesHandler(response, req)
+
+	body := response.Body.String()
+	if !strings.Contains(body, `"stop_reason":"refusal"`) {
+		t.Fatalf("content_filter not mapped to refusal: %s", body)
+	}
+	logs, err := usage.NewSQLiteTracker(db).ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs.Items) != 1 {
+		t.Fatalf("want 1 logged request, got %d", len(logs.Items))
+	}
+	if logs.Items[0].Success || !strings.Contains(logs.Items[0].ErrorMessage, "content_filter") {
+		t.Fatalf("filtered turn logged as successful: %+v", logs.Items[0])
+	}
+}
+
+// 反方向同理：Anthropic 上游的安全拒绝送到 OpenAI 客户端手上必须是 content_filter，
+// 落进 default 会变成 stop，客户端把被拦下的回合当成正常完成。
+func TestAnthropicRefusalBecomesContentFilter(t *testing.T) {
+	stream := strings.Join([]string{
+		`event: message_start`,
+		`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10,"output_tokens":1}}}`,
+		``,
+		`event: content_block_delta`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"no"}}`,
+		``,
+		`event: message_delta`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null},"usage":{"output_tokens":5}}`,
+		``,
+		`event: message_stop`,
+		`data: {"type":"message_stop"}`,
+		``,
+	}, "\n")
+	var out strings.Builder
+	if err := anthropicStreamToOpenAI(strings.NewReader(stream), "client-model", &out); err != nil {
+		t.Fatalf("stream conversion failed: %v", err)
+	}
+	if !strings.Contains(out.String(), `"finish_reason":"content_filter"`) {
+		t.Fatalf("refusal not mapped to content_filter: %s", out.String())
+	}
+}

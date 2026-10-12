@@ -431,3 +431,48 @@ func TestListRequestLogsFiltersStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestClearWipesLogsAndUsage(t *testing.T) {
+	db, err := storage.OpenPath(filepath.Join(t.TempDir(), "agent-router.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tracker := NewSQLiteTracker(db)
+	for i := 0; i < 3; i++ {
+		if err := tracker.Record(Event{
+			ProviderID: "openai", ProviderName: "OpenAI", ClientModel: "chat", UpstreamModel: "gpt-test",
+			RequestBody: `{"messages":[]}`, ResponseBody: `{"choices":[]}`, Success: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tracker.Clear(); err != nil {
+		t.Fatal(err)
+	}
+	// Both the log panel and the usage dashboard read these two tables, so a
+	// clear that misses one would leave half the history on screen.
+	page, err := tracker.ListRequestLogs(1, 20, RequestLogFilter{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 0 || len(page.Items) != 0 {
+		t.Fatalf("request logs survived the clear: %+v", page)
+	}
+	if summary := tracker.Summary(nil); summary.Requests != 0 {
+		t.Fatalf("usage events survived the clear: %+v", summary)
+	}
+	for _, stat := range tracker.UsageByProvider(nil) {
+		if stat.Requests != 0 {
+			t.Fatalf("provider usage survived the clear: %+v", stat)
+		}
+	}
+	// The tables stay writable afterwards: the vacuum must not have left the
+	// database locked or damaged.
+	if err := tracker.Record(Event{ProviderID: "openai", ClientModel: "chat", Success: true}); err != nil {
+		t.Fatal(err)
+	}
+	if summary := tracker.Summary(nil); summary.Requests != 1 {
+		t.Fatalf("recording after a clear failed: %+v", summary)
+	}
+}

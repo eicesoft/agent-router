@@ -1,13 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  Button,
-  Label,
-  Modal,
-  Select,
-  ListBox,
-  TextField,
-  Input,
-} from "@heroui/react";
+import { Button, Label, Modal, Select, ListBox, TextField, Input } from "./ui";
 import type { AppSettings } from "../lib/types";
 import { saveSettings } from "../lib/api";
 

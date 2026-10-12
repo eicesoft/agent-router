@@ -561,3 +561,31 @@ func (t *SQLiteTracker) Summary(price PriceFunc) Summary {
 	s.CostUSD = total.TotalCost
 	return s
 }
+
+// Clear wipes the request log and every aggregate computed from it, then
+// vacuums the file: the bodies in request_logs are what make the database grow
+// to GBs, and SQLite keeps freed pages, so deleting rows alone would reclaim
+// nothing. The vacuum runs outside the delete transaction and can take minutes
+// on a large file; while it holds the write lock the proxy's best-effort
+// Record calls fail, which is why the UI warns that concurrent requests may go
+// unlogged. An error from the vacuum still leaves the rows deleted.
+func (t *SQLiteTracker) Clear() error {
+	tx, err := t.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM request_logs`); err != nil {
+		return fmt.Errorf("clear request logs: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM usage_events`); err != nil {
+		return fmt.Errorf("clear usage events: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if _, err := t.db.Exec(`VACUUM`); err != nil {
+		return fmt.Errorf("cleared, but reclaiming disk space failed: %w", err)
+	}
+	return nil
+}

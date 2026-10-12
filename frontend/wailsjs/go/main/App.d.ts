@@ -19,6 +19,8 @@ export function AddProviderCredential(arg1:string,arg2:string,arg3:string):Promi
 
 export function CancelPlayground():Promise<void>;
 
+export function ClearUsageData():Promise<void>;
+
 export function DeleteLocalAPIKey(arg1:string):Promise<void>;
 
 export function DeleteProvider(arg1:string):Promise<void>;

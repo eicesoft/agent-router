@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Modal, TextField, Input, Label } from "@heroui/react";
+import { Button, Modal, TextField, Input, Label } from "./ui";
 import { Info, Search } from "lucide-react";
 import { listDevProviders, refreshDevProviders } from "../lib/api";
 import type { DevProvider } from "../lib/types";

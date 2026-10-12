@@ -634,6 +634,13 @@ func (a *App) GetUsageBreakdown() usage.Breakdown {
 	}
 }
 
+// ClearUsageData deletes the whole request log and usage history and reclaims
+// the disk it occupied. It is the only way to shrink the database file, which
+// grows to hold every request/response body it has stored.
+func (a *App) ClearUsageData() error {
+	return a.usage.Clear()
+}
+
 // GatewayHost is the local router address the generated templates point at.
 func (a *App) GatewayHost() string { return "http://" + a.gatewayAddr }
 

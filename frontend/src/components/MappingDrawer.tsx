@@ -9,7 +9,7 @@ import {
   TagGroup,
   TextField,
   Tooltip,
-} from "@heroui/react";
+} from "./ui";
 import { Plus, X, Zap } from "lucide-react";
 import { formatTokenCount } from "../lib/format";
 import { defaultClientModel } from "../lib/naming";

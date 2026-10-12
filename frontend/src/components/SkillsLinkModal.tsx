@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Checkbox, Modal } from "@heroui/react";
+import { Button, Checkbox, Modal } from "./ui";
 import { RefreshCw } from "lucide-react";
 import { listSkillLinks, setSkillLink } from "../lib/api";
 import type { SkillLink, SkillLinkState, ToolSkillLinks } from "../lib/types";

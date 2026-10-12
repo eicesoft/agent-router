@@ -80,7 +80,8 @@ func (a Anthropic) Do(ctx context.Context, p provider.Provider, secret string, i
 		Content []struct {
 			Text string `json:"text"`
 		} `json:"content"`
-		Usage struct {
+		StopReason string `json:"stop_reason"`
+		Usage      struct {
 			Input  int `json:"input_tokens"`
 			Output int `json:"output_tokens"`
 		} `json:"usage"`
@@ -92,7 +93,13 @@ func (a Anthropic) Do(ctx context.Context, p provider.Provider, secret string, i
 	for _, c := range source.Content {
 		text += c.Text
 	}
-	result := map[string]any{"id": source.ID, "object": "chat.completion", "model": input.Model, "choices": []any{map[string]any{"index": 0, "message": map[string]string{"role": "assistant", "content": text}, "finish_reason": "stop"}}, "usage": map[string]int{"prompt_tokens": source.Usage.Input, "completion_tokens": source.Usage.Output, "total_tokens": source.Usage.Input + source.Usage.Output}}
+	// 这条缓冲路径只做正文转换，finish_reason 其余取值一律报 stop；唯独安全拒绝
+	// 不能伪装成正常完成——OpenAI 线协议上它就是 content_filter。
+	finish := "stop"
+	if source.StopReason == "refusal" {
+		finish = "content_filter"
+	}
+	result := map[string]any{"id": source.ID, "object": "chat.completion", "model": input.Model, "choices": []any{map[string]any{"index": 0, "message": map[string]string{"role": "assistant", "content": text}, "finish_reason": finish}}, "usage": map[string]int{"prompt_tokens": source.Usage.Input, "completion_tokens": source.Usage.Output, "total_tokens": source.Usage.Input + source.Usage.Output}}
 	out, _ := json.Marshal(result)
 	return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(out))}, nil
 }
@@ -470,6 +477,10 @@ func openAIFinishReason(reason string) string {
 		return "length"
 	case "tool_use":
 		return "tool_calls"
+	case "refusal":
+		// Anthropic 的安全拒绝在 OpenAI 这条线协议上就是 content_filter；
+		// 落到 default 会变成 stop，客户端把被拦下的回合当成正常完成。
+		return "content_filter"
 	default:
 		return "stop"
 	}

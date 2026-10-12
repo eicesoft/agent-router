@@ -7,7 +7,7 @@ import {
   Label,
   TextField,
   Tooltip,
-} from "@heroui/react";
+} from "./ui";
 import { Building2, Plus, RefreshCw, X } from "lucide-react";
 import {
   fetchProviderIcon,

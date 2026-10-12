@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,7 +80,8 @@ CREATE TABLE IF NOT EXISTS request_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_request_logs_created_at ON request_logs(created_at DESC, id DESC);
 -- 覆盖索引：使用统计与日志筛选只需小列，避免扫描含大体积请求/响应体的大表。
-CREATE INDEX IF NOT EXISTS idx_request_logs_token ON request_logs(token_id, token_name, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens, success);
+-- idx_request_logs_token 的列随补列迁移逐步变宽，统一由 syncUsageIndexes 建，
+-- 这里不再内联，否则两处定义不一致、每次启动都要重建一次。
 CREATE INDEX IF NOT EXISTS idx_request_logs_filter ON request_logs(token_id, provider_name, client_model, success);
 CREATE TABLE IF NOT EXISTS local_api_keys (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, api_key TEXT NOT NULL UNIQUE,
@@ -228,17 +230,60 @@ ALTER TABLE model_mappings_rebuilt RENAME TO model_mappings;`); err != nil {
 	// 聚合按「维度 × 路由(provider, model)」出粒度再算费（见 backend/usage/cost.go），
 	// 索引必须带上 provider_id/client_model，否则 SQLite 会裸扫 request_logs
 	// 的 body 溢出页（每次打开使用情况页抖几百毫秒）。
-	// 旧索引列不够宽：CREATE INDEX IF NOT EXISTS 对已存在的窄索引无效，先 DROP。
-	if _, err := db.Exec(`
-DROP INDEX IF EXISTS idx_request_logs_credential;
-DROP INDEX IF EXISTS idx_request_logs_token;
-DROP INDEX IF EXISTS idx_usage_events_provider;
-DROP INDEX IF EXISTS idx_usage_events_model;
-CREATE INDEX IF NOT EXISTS idx_request_logs_credential ON request_logs(credential_id, credential_name, credential_mask, provider_id, client_model, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens);
-CREATE INDEX IF NOT EXISTS idx_request_logs_token ON request_logs(token_id, token_name, provider_id, client_model, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens);
-CREATE INDEX IF NOT EXISTS idx_usage_events_route ON usage_events(provider_id, model, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens);`); err != nil {
+	// 旧索引列不够宽：CREATE INDEX IF NOT EXISTS 对已存在的窄索引无效，先比对
+	// 定义再 DROP+CREATE——无条件重建在 7.2GB 的 request_logs 上实测 33s，
+	// 而 wails dev 的绑定生成器也会跑 NewApp→Open，启动就先卡半分钟。
+	if err := syncUsageIndexes(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate usage indexes: %w", err)
 	}
 	return db, nil
+}
+
+// usageIndexes 是必须存在的覆盖索引及其期望定义。stmt 必须是可直接执行的
+// CREATE INDEX 语句，索引名与 stmt 里的名字一致。
+var usageIndexes = []struct {
+	name string
+	stmt string
+}{
+	{"idx_request_logs_credential", `CREATE INDEX idx_request_logs_credential ON request_logs(credential_id, credential_name, credential_mask, provider_id, client_model, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens)`},
+	{"idx_request_logs_token", `CREATE INDEX idx_request_logs_token ON request_logs(token_id, token_name, provider_id, client_model, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens)`},
+	{"idx_usage_events_route", `CREATE INDEX idx_usage_events_route ON usage_events(provider_id, model, success, input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens)`},
+}
+
+// legacyUsageIndexes 是被上面三者取代的旧索引名，存在就删掉。
+var legacyUsageIndexes = []string{"idx_usage_events_provider", "idx_usage_events_model"}
+
+// syncUsageIndexes 把 usageIndexes 补齐到实际 schema：定义已经一致的索引跳过，
+// 只重建缺失或列序列不符的那些。重建本身仍走 DROP+CREATE，因为 SQLite 无法
+// 原地修改索引列。
+func syncUsageIndexes(db *sql.DB) error {
+	for _, name := range legacyUsageIndexes {
+		if _, err := db.Exec(`DROP INDEX IF EXISTS ` + name); err != nil {
+			return err
+		}
+	}
+	for _, spec := range usageIndexes {
+		var current string
+		// 新库或索引缺失时 sqlite_master 查不到行，当作需要创建。
+		if err := db.QueryRow(`SELECT COALESCE(sql, '') FROM sqlite_master WHERE type = 'index' AND name = ?`, spec.name).Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if normalizeSQL(current) == normalizeSQL(spec.stmt) {
+			continue
+		}
+		if _, err := db.Exec(`DROP INDEX IF EXISTS ` + spec.name); err != nil {
+			return err
+		}
+		if _, err := db.Exec(spec.stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// normalizeSQL 让 sqlite_master 里保存的建索引语句与源码里的写法可比：
+// 丢掉排版差异，只保留 token 序列。
+func normalizeSQL(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }

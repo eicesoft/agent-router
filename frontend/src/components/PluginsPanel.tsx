@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Chip, Switch, Tooltip } from "@heroui/react";
+import { Button, Chip, Switch, Tooltip } from "./ui";
 import { RefreshCw } from "lucide-react";
 import { listPlugins, setPluginConfig, togglePlugin } from "../lib/api";
 import type { PluginInfo } from "../lib/types";

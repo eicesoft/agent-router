@@ -4,9 +4,14 @@ import {
   RangeCalendar,
   DateRangePickerTrigger,
   DateRangePickerTriggerIndicator,
-} from "@heroui/react";
+} from "./ui";
 import { Group } from "react-aria-components/DateRangePicker";
-import { getLocalTimeZone, parseDate, today } from "@internationalized/date";
+import {
+  getLocalTimeZone,
+  parseDate,
+  today,
+  type DateDuration,
+} from "@internationalized/date";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import type { DateValue } from "react-aria-components/Calendar";
 
@@ -27,6 +32,27 @@ function toDateValue(value: string): DateValue | null {
 
 function fromDateValue(value: DateValue): string {
   return `${value.year}-${String(value.month).padStart(2, "0")}-${String(value.day).padStart(2, "0")}`;
+}
+
+/** 弹层里的一列：该月标题 + 该月网格。offset 指明这是可见范围内的第几个月。 */
+function MonthColumn({ offset }: { offset?: DateDuration }) {
+  return (
+    <div className="date-range-month">
+      <RangeCalendar.Heading offset={offset} />
+      <RangeCalendar.Grid offset={offset}>
+        <RangeCalendar.GridHeader>
+          {(day) => <RangeCalendar.HeaderCell>{day}</RangeCalendar.HeaderCell>}
+        </RangeCalendar.GridHeader>
+        <RangeCalendar.GridBody>
+          {(date) => (
+            <RangeCalendar.Cell date={date}>
+              {(cell) => <>{cell.formattedDate}</>}
+            </RangeCalendar.Cell>
+          )}
+        </RangeCalendar.GridBody>
+      </RangeCalendar.Grid>
+    </div>
+  );
 }
 
 export function DateRangeField({
@@ -80,31 +106,25 @@ export function DateRangeField({
         </DateRangePicker.Trigger>
       </Group>
       <DateRangePicker.Popover>
-        <RangeCalendar visibleDuration={{ months: 2 }}>
+        <RangeCalendar
+          isDateUnavailable={(date) =>
+            date.compare(today(getLocalTimeZone())) > 0
+          }
+          visibleDuration={{ months: 2 }}
+        >
           <RangeCalendar.Header>
             <RangeCalendar.NavButton slot="previous">
               <ChevronLeft size={14} />
             </RangeCalendar.NavButton>
-            <RangeCalendar.Heading />
             <RangeCalendar.NavButton slot="next">
               <ChevronRight size={14} />
             </RangeCalendar.NavButton>
           </RangeCalendar.Header>
+          {/* 两个月并排：RAC 的翻页步长等于 visibleDuration（等于两个月），
+              可见范围里的每个月都必须自己渲染一份网格，否则翻页会跳过月份。 */}
           <div className="date-range-calendars">
-            <RangeCalendar.Grid>
-              <RangeCalendar.GridHeader>
-                {(day) => (
-                  <RangeCalendar.HeaderCell>{day}</RangeCalendar.HeaderCell>
-                )}
-              </RangeCalendar.GridHeader>
-              <RangeCalendar.GridBody>
-                {(date) => (
-                  <RangeCalendar.Cell date={date}>
-                    {(cell) => <>{cell.formattedDate}</>}
-                  </RangeCalendar.Cell>
-                )}
-              </RangeCalendar.GridBody>
-            </RangeCalendar.Grid>
+            <MonthColumn />
+            <MonthColumn offset={{ months: 1 }} />
           </div>
         </RangeCalendar>
       </DateRangePicker.Popover>

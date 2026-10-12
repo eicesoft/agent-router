@@ -210,6 +210,10 @@ export async function getUsageBreakdown(): Promise<UsageBreakdown> {
   if (!app) return { providers: [], models: [], keys: [], credentials: [] };
   return app.GetUsageBreakdown();
 }
+export async function clearUsageData(): Promise<void> {
+  const app = (window as any).go?.main?.App;
+  if (app) await app.ClearUsageData();
+}
 export async function listToolTemplates(): Promise<ToolPreview[]> {
   const app = (window as any).go?.main?.App;
   if (!app) return [];

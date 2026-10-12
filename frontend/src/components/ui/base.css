@@ -1,0 +1,1427 @@
+/* ============================================================================
+ * 适配层基础样式（手写，替代原 @heroui/styles 的组件底子）
+ *
+ * 只覆盖本项目用到的组件钩子：类名/结构与 @heroui/react 的 DOM 契约一致
+ * （BEM 与 xx__yy），选择器接在 src/styles.css 原有的上下文规则之下。
+ * 设计令牌优先复用 styles.css 的 app token；--field-* / --default-hover
+ * 原由 heroui 主题提供、styles.css 有引用，在此补齐（含 html.dark 变体）。
+ * ========================================================================== */
+
+/* ---------- 设计令牌（原 heroui 主题提供，styles.css 有引用） ---------- */
+:root {
+  --field-background: #fff;
+  --field-foreground: #18191c;
+  --field-shadow:
+    0 2px 4px 0 rgb(0 0 0 / 0.04), 0 1px 2px 0 rgb(0 0 0 / 0.06),
+    0 0 1px 0 rgb(0 0 0 / 0.06);
+  --field-hover: color-mix(
+    in srgb,
+    var(--field-background) 96%,
+    var(--field-foreground) 4%
+  );
+  --field-border-hover: color-mix(
+    in srgb,
+    var(--field-border) 88%,
+    var(--field-foreground) 12%
+  );
+  --field-border-focus: color-mix(
+    in srgb,
+    var(--field-border) 74%,
+    var(--field-foreground) 26%
+  );
+  /* 清除类小按钮的 hover 底（styles.css 的 .date-range-trigger-clear 用）。 */
+  --default-hover: #e7e7e9;
+}
+
+html.dark {
+  --field-background: #26272c;
+  --field-foreground: #ececef;
+  --field-shadow: 0 0 0 0 transparent;
+  --field-hover: #2e3036;
+  --default-hover: #34363c;
+}
+
+/* ---------- Button ---------- */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--ink-body);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  text-decoration: none;
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease,
+    opacity 0.12s ease;
+}
+/* 与原 heroui 一致的图标内联缩进（styles.css 的 .nav-item svg 规则会归零）。 */
+.button svg {
+  margin-inline: -2px;
+}
+.button:hover:not(:disabled) {
+  background: var(--hover-fill);
+}
+.button:active:not(:disabled) {
+  background: var(--hover-fill-strong);
+}
+.button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-mark) 55%, transparent);
+  outline-offset: 1px;
+}
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.button--sm {
+  height: 24px;
+  padding: 0 9px;
+  font-size: 11.5px;
+  border-radius: 7px;
+}
+.button--lg {
+  height: 36px;
+  padding: 0 16px;
+  font-size: 13px;
+}
+.button--icon-only {
+  width: 30px;
+  padding: 0;
+}
+.button--sm.button--icon-only {
+  width: 24px;
+}
+.button--lg.button--icon-only {
+  width: 36px;
+}
+.button--full-width {
+  width: 100%;
+}
+/* 主按钮沿用 app 的实心选中语汇（侧栏选中项 / 主按钮共用 token）。 */
+.button--primary {
+  color: var(--selected-ink);
+  background: var(--selected-bg);
+}
+.button--primary:hover:not(:disabled) {
+  background: var(--selected-bg-hover);
+}
+.button--secondary {
+  background: var(--hover-fill);
+}
+.button--secondary:hover:not(:disabled) {
+  background: var(--hover-fill-strong);
+}
+.button--ghost {
+  background: transparent;
+}
+.button--outline {
+  background: transparent;
+  border-color: var(--field-border);
+}
+.button--outline:hover:not(:disabled) {
+  background: var(--hover-fill);
+  border-color: var(--field-border-hover);
+}
+.button--tertiary {
+  background: transparent;
+}
+.button--danger {
+  color: #fff;
+  background: var(--error-ink);
+}
+.button--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error-ink) 88%, #000);
+}
+.button--danger-soft {
+  color: var(--error-ink);
+  background: color-mix(in srgb, var(--error-ink) 12%, transparent);
+}
+.button--danger-soft:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error-ink) 20%, transparent);
+}
+
+/* ---------- 表单字段皮肤（input / select / autocomplete / date 触发器共用）
+   白底 + 柔和投影、无实边框——与 styles.css 里 thinking-trigger 的
+   “与 select 触发器同一套皮肤”注释保持一致。上下文规则可覆盖。 ---------- */
+.input,
+.select__trigger,
+.autocomplete__trigger,
+.search-field__input,
+.date-range-picker__trigger {
+  min-height: 30px;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--field-foreground);
+  background: var(--field-background);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  box-shadow: var(--field-shadow);
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
+}
+.input:hover:not(:disabled),
+.select__trigger:hover:not(:disabled),
+.autocomplete__trigger:hover:not(:disabled),
+.date-range-picker__trigger:hover:not(:disabled) {
+  background: var(--field-hover);
+}
+.input:focus,
+.select__trigger:focus-visible,
+.autocomplete__trigger:focus-visible,
+.date-range-picker__trigger:focus-visible {
+  border-color: var(--field-border-focus);
+}
+.input:disabled,
+.select__trigger:disabled,
+.autocomplete__trigger:disabled {
+  opacity: 0.55;
+  box-shadow: none;
+  cursor: default;
+}
+.input::placeholder {
+  color: var(--muted-3);
+}
+.input {
+  width: 100%;
+  outline: none;
+}
+
+/* ---------- TextField / Label ---------- */
+.textfield {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.textfield--full-width {
+  width: 100%;
+}
+.label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.label--required::after {
+  content: "*";
+  color: var(--error-ink);
+  margin-inline-start: 2px;
+}
+.label--disabled {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+.label--invalid {
+  color: var(--error-ink);
+}
+
+/* ---------- Select / Autocomplete ---------- */
+.select,
+.autocomplete {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.select--full-width,
+.autocomplete--full-width {
+  width: 100%;
+}
+.select__trigger,
+.autocomplete__trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.select__trigger--full-width,
+.autocomplete__trigger--full-width {
+  width: 100%;
+}
+.select__value,
+.autocomplete__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 下拉箭头钉在触发器右缘（styles.css 的占位/覆盖规则依赖这一行为）。 */
+.select__indicator,
+.autocomplete__indicator {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted-3);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+.select__clear-button,
+.autocomplete__clear-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--muted-3);
+  cursor: pointer;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+}
+/* The indicator is absolutely positioned at the trigger's right edge. */
+.select__clear-button:not([data-empty="true"]) {
+  margin-inline-end: 24px;
+}
+.select__clear-button:hover,
+.autocomplete__clear-button:hover {
+  color: var(--ink-body);
+}
+.select__clear-button[data-empty="true"],
+.autocomplete__clear-button[data-empty="true"] {
+  display: none;
+}
+.autocomplete__filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 4px 0;
+}
+
+/* ---------- 弹层表面（select / autocomplete / popover / date 弹层共用） ---------- */
+.select__popover,
+.autocomplete__popover,
+.popover,
+.date-range-picker__popover {
+  z-index: 1300;
+  padding: 4px;
+  color: var(--ink-body);
+  background: var(--dialog-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgb(20 21 25 / 0.18);
+  outline: none;
+  backdrop-filter: blur(16px) saturate(1.1);
+}
+.select__popover,
+.autocomplete__popover {
+  width: var(--trigger-width, auto);
+}
+.popover {
+  padding: 8px;
+}
+.date-range-picker__popover {
+  width: fit-content;
+  padding: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.popover__dialog {
+  outline: none;
+}
+.popover__heading {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-heading);
+}
+.popover__trigger {
+  display: inline-block;
+}
+
+/* ---------- ListBox ---------- */
+.list-box {
+  width: 100%;
+  max-height: min(320px, 50vh);
+  padding: 4px;
+  overflow-y: auto;
+  outline: none;
+}
+.list-box-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 12.5px;
+  color: var(--ink-body);
+  cursor: default;
+  user-select: none;
+  border-radius: 8px;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+@media (hover: hover) {
+  .list-box-item:hover,
+  .list-box-item[data-hovered="true"] {
+    background: color-mix(in srgb, var(--hover-fill) 85%, var(--ink-body) 15%);
+  }
+}
+.list-box-item[data-selected="true"],
+.list-box-item[aria-selected="true"] {
+  color: var(--selected-ink);
+  background: var(--selected-bg);
+}
+.list-box-item[data-focus-visible] {
+  outline: 2px solid color-mix(in srgb, var(--accent-mark) 55%, transparent);
+  outline-offset: -2px;
+}
+.list-box-item[data-disabled] {
+  opacity: 0.5;
+}
+.list-box-section {
+  display: flex;
+  flex-direction: column;
+}
+.list-box-section + .list-box-section {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--divider);
+}
+/* 分组标题（listbox 内的 <header>）。 */
+.header,
+.list-box-section header {
+  width: 100%;
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: start;
+  color: var(--muted);
+}
+
+/* ---------- SearchField ---------- */
+.search-field {
+  width: 100%;
+}
+.search-field__group {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.search-field__input {
+  width: 100%;
+  padding-inline: 28px 26px;
+  outline: none;
+}
+.search-field__search-icon {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  display: inline-flex;
+  color: var(--muted-3);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+.search-field__clear-button {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--muted-3);
+  cursor: pointer;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+}
+.search-field__clear-button:hover {
+  color: var(--ink-body);
+}
+
+/* ---------- Modal ---------- */
+.modal__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  background: var(--overlay-scrim);
+  backdrop-filter: blur(3px);
+}
+.modal__container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+}
+.modal__container--full {
+  padding: 0;
+}
+.modal__dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 448px;
+  max-height: 100%;
+  padding: 20px 22px;
+  color: var(--ink-body);
+  background: var(--dialog-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgb(20 21 25 / 0.25);
+  outline: none;
+  backdrop-filter: blur(24px) saturate(1.15);
+}
+.modal__dialog--xs {
+  max-width: 320px;
+}
+.modal__dialog--sm {
+  max-width: 384px;
+}
+.modal__dialog--md {
+  max-width: 448px;
+}
+.modal__dialog--lg {
+  max-width: 512px;
+}
+.modal__dialog--full,
+.modal__dialog--cover {
+  max-width: none;
+  height: 100%;
+}
+.modal__header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  padding-bottom: 12px;
+  padding-inline-end: 32px;
+}
+.modal__heading {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-heading);
+}
+.modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-body);
+}
+.modal__body--scroll-inside {
+  overscroll-behavior: contain;
+  overflow-y: auto;
+}
+.modal__footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 14px;
+}
+.modal__close-trigger {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted);
+  cursor: pointer;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+.modal__close-trigger:hover {
+  color: var(--ink-body);
+  background: var(--hover-fill);
+}
+
+/* ---------- Tooltip ---------- */
+.tooltip__trigger {
+  display: inline-block;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+.tooltip {
+  z-index: 1500;
+  max-width: 320px;
+  padding: 6px 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #fff;
+  word-break: break-word;
+  background: var(--ink-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.2);
+  outline: none;
+}
+
+/* ---------- Switch ---------- */
+.switch {
+  display: inline-flex;
+}
+.switch__content {
+  position: relative;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-body);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.switch__control {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  width: 40px;
+  height: 20px;
+  overflow: hidden;
+  background: var(--switch-off);
+  border-radius: 999px;
+  transition: background-color 0.15s ease;
+}
+.switch--sm .switch__control {
+  width: 32px;
+  height: 18px;
+}
+.switch--lg .switch__control {
+  width: 46px;
+  height: 24px;
+}
+.switch__thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+  transition: transform 0.15s ease;
+}
+.switch--sm .switch__thumb {
+  width: 14px;
+  height: 14px;
+}
+.switch--lg .switch__thumb {
+  width: 20px;
+  height: 20px;
+}
+.switch__content[data-selected="true"] .switch__control {
+  background: var(--switch-on);
+}
+.switch__content[data-selected="true"] .switch__thumb {
+  transform: translateX(22px);
+}
+.switch--sm .switch__content[data-selected="true"] .switch__thumb {
+  transform: translateX(16px);
+}
+.switch--lg .switch__content[data-selected="true"] .switch__thumb {
+  transform: translateX(24px);
+}
+.switch__content[data-disabled] {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ---------- Checkbox / CheckboxGroup ---------- */
+.checkbox {
+  display: inline-flex;
+}
+.checkbox__content {
+  position: relative;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink-body);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.checkbox__control {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  overflow: hidden;
+  background: var(--field-background);
+  border: 1px solid var(--field-border);
+  border-radius: 4px;
+  box-shadow: var(--field-shadow);
+  transition:
+    background-color 0.12s ease,
+    border-color 0.12s ease;
+}
+@media (hover: hover) {
+  .checkbox__content:hover .checkbox__control {
+    border-color: var(--field-border-hover);
+  }
+}
+.checkbox__content[data-selected="true"] .checkbox__control {
+  background: var(--selected-bg);
+  border-color: var(--selected-bg);
+}
+.checkbox__indicator {
+  display: inline-flex;
+  color: transparent;
+}
+.checkbox__indicator svg {
+  width: 12px;
+  height: 12px;
+}
+.checkbox__content[data-selected="true"] .checkbox__indicator {
+  color: var(--selected-ink);
+}
+.checkbox__content[data-disabled] {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+.checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+/* ---------- Tabs ---------- */
+.tabs {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  outline: none;
+}
+.tabs__list-container {
+  position: relative;
+  min-width: 0;
+}
+/* 溢出滚动箭头：默认隐藏，待 ScrollShadow 报告可滚动后显示（对照 @heroui tabs.css）。 */
+.tabs__list-container > .tabs__list-container__scroll-prev,
+.tabs__list-container > .tabs__list-container__scroll-next {
+  position: absolute;
+  z-index: 2;
+  display: none;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--ink);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+  transition: opacity 150ms ease;
+}
+@media (hover: hover) {
+  .tabs__list-container > .tabs__list-container__scroll-prev:hover,
+  .tabs__list-container > .tabs__list-container__scroll-next:hover {
+    opacity: 0.7;
+  }
+}
+.tabs__list-container > .tabs__list-container__scroll-prev:focus-visible,
+.tabs__list-container > .tabs__list-container__scroll-next:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-mark) 55%, transparent);
+  outline-offset: 1px;
+}
+/* 横向贴左右两侧垂直居中。 */
+.tabs__list-container > .tabs__list-container__scroll-prev {
+  inset-inline-start: 4px;
+  top: 50%;
+  translate: 0 -50%;
+}
+.tabs__list-container > .tabs__list-container__scroll-next {
+  inset-inline-end: 4px;
+  top: 50%;
+  translate: 0 -50%;
+}
+/* 纵向贴上下两侧水平居中。 */
+.tabs__list-container:has(> [data-orientation="vertical"])
+  > .tabs__list-container__scroll-prev {
+  inset-inline-start: 50%;
+  top: 4px;
+  translate: -50% 0;
+}
+.tabs__list-container:has(> [data-orientation="vertical"])
+  > .tabs__list-container__scroll-next {
+  inset-inline-start: 50%;
+  top: auto;
+  bottom: 4px;
+  translate: -50% 0;
+}
+/* data-*-scroll 由 ScrollShadow 写在 scroller 上，仅该方向可滚动时露出箭头。 */
+.tabs__list-container:has(
+    > :is(
+      [data-left-scroll="true"],
+      [data-left-right-scroll="true"],
+      [data-top-scroll="true"],
+      [data-top-bottom-scroll="true"]
+    )
+  )
+  > .tabs__list-container__scroll-prev {
+  display: inline-flex;
+}
+.tabs__list-container:has(
+    > :is(
+      [data-right-scroll="true"],
+      [data-left-right-scroll="true"],
+      [data-bottom-scroll="true"],
+      [data-top-bottom-scroll="true"]
+    )
+  )
+  > .tabs__list-container__scroll-next {
+  display: inline-flex;
+}
+.tabs__list {
+  position: relative;
+  display: inline-flex;
+  gap: 2px;
+  isolation: isolate;
+  max-width: 100%;
+}
+.tabs__tab {
+  position: relative;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  min-width: 80px;
+  padding: 7px 14px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.tabs__tab[data-selected="true"] {
+  color: var(--ink-heading);
+  font-weight: 600;
+}
+.tabs__tab[data-disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.tabs__indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  background: var(--well-bg);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+  transition:
+    translate 0.25s cubic-bezier(0.32, 0.72, 0, 1),
+    width 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.tabs__panel {
+  padding: 12px 0;
+  outline: none;
+}
+.tabs__separator {
+  width: 1px;
+  margin-inline: 8px;
+  background: var(--divider);
+}
+.tabs--vertical {
+  flex-direction: row;
+}
+
+/* ---------- Slider ---------- */
+.slider {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 120px;
+  outline: none;
+}
+.slider__track {
+  position: relative;
+  height: 4px;
+  background: var(--well-border);
+  border-radius: 999px;
+}
+.slider__fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--accent-mark);
+  border-radius: 999px;
+  pointer-events: none;
+}
+.slider__thumb {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  cursor: grab;
+  background: #fff;
+  border: 2px solid var(--accent-mark);
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+}
+.slider__thumb:active {
+  cursor: grabbing;
+}
+.slider__output {
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.slider__marks {
+  display: flex;
+  justify-content: space-between;
+}
+
+/* ---------- Tag / TagGroup ---------- */
+.tag-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.tag-group__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  outline: none;
+}
+.tag {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--chip-ink);
+  background: var(--chip-bg);
+  border-radius: 6px;
+}
+.tag--sm {
+  height: 18px;
+  padding: 0 6px;
+  font-size: 10.5px;
+}
+.tag--lg {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.tag--surface {
+  background: var(--well-bg);
+  border: 1px solid var(--well-border);
+}
+.tag__remove-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  opacity: 0.6;
+}
+.tag__remove-button:hover {
+  opacity: 1;
+}
+
+/* ---------- Chip（app 全部使用 variant="soft" + color 变体） ---------- */
+.chip {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--chip-ink);
+  background: var(--chip-bg);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.chip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip--sm {
+  padding: 1px 6px;
+  font-size: 10.5px;
+}
+.chip--lg {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+/* color 变体（soft 之上叠加语义色，顺序在尺寸之后保证覆盖）。 */
+.chip--success {
+  color: var(--success-ink);
+  background: var(--success-soft);
+}
+.chip--danger {
+  color: var(--danger-removed-ink);
+  background: var(--danger-removed-bg);
+}
+.chip--warning {
+  color: var(--warn-ink);
+  background: color-mix(in srgb, var(--warn-ink) 12%, transparent);
+}
+.chip--accent {
+  color: var(--accent-mark);
+  background: color-mix(in srgb, var(--accent-mark) 14%, transparent);
+}
+.chip--primary {
+  color: var(--selected-ink);
+  background: var(--selected-bg);
+}
+
+/* ---------- Card（padding 由 styles.css 的 card-content 上下文规则承担） ---------- */
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+}
+.card--secondary,
+.card--tertiary {
+  background: var(--well-bg);
+}
+.card--transparent {
+  background: transparent;
+}
+.card__content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+.card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.card__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-heading);
+}
+.card__description {
+  font-size: 12px;
+  color: var(--muted-4);
+}
+.card__footer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* ---------- Separator ---------- */
+.separator {
+  flex-shrink: 0;
+  width: 100%;
+  height: 0;
+  margin: 12px 0;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--divider);
+  border-radius: 2px;
+}
+.separator--vertical {
+  width: 0;
+  height: auto;
+  margin: 0 12px;
+  border-top: 0;
+  border-left: 1px solid var(--divider);
+}
+.separator--secondary {
+  border-color: var(--well-border);
+}
+
+/* ---------- ScrollShadow ---------- */
+.scroll-shadow {
+  --scroll-shadow-size: 40px;
+  --scroll-shadow-scrollbar-size: 0px;
+  --scroll-shadow-offset: 0px;
+  /* 不支持 scroll-timeline 的浏览器下恒为 0px → mask 全黑，等价无渐隐。 */
+  --scroll-shadow-start-fade: 0px;
+  --scroll-shadow-end-fade: 0px;
+  position: relative;
+}
+.scroll-shadow--vertical {
+  overflow-y: auto;
+}
+.scroll-shadow--horizontal {
+  overflow-x: auto;
+}
+.scroll-shadow--hide-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scroll-shadow--hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+/* 顶/底渐隐（复刻 heroui 的 scroll-timeline 方案；渐隐带随滚动淡入淡出）。 */
+.scroll-shadow--fade.scroll-shadow--vertical[data-scroll-shadow-mode="auto"] {
+  --scroll-linear-gradient:
+    180deg, transparent 0, #000 var(--scroll-shadow-start-fade),
+    #000 calc(100% - var(--scroll-shadow-end-fade)), transparent 100%;
+  mask-image: linear-gradient(var(--scroll-linear-gradient));
+  animation:
+    linear both scroll-shadow-start-fade,
+    linear both scroll-shadow-end-fade;
+  animation-timeline: scroll(self), scroll(self);
+  animation-range:
+    var(--scroll-shadow-offset)
+      calc(var(--scroll-shadow-offset) + var(--scroll-shadow-size)),
+    calc(100% - var(--scroll-shadow-size) - var(--scroll-shadow-offset))
+      calc(100% - var(--scroll-shadow-offset));
+}
+.scroll-shadow--fade.scroll-shadow--horizontal[data-scroll-shadow-mode="auto"] {
+  --scroll-linear-gradient:
+    90deg, transparent 0, #000 var(--scroll-shadow-start-fade),
+    #000 calc(100% - var(--scroll-shadow-end-fade)), transparent 100%;
+  mask-image: linear-gradient(var(--scroll-linear-gradient));
+  animation:
+    linear both scroll-shadow-start-fade,
+    linear both scroll-shadow-end-fade;
+  animation-timeline: scroll(self inline), scroll(self inline);
+  animation-range:
+    var(--scroll-shadow-offset)
+      calc(var(--scroll-shadow-offset) + var(--scroll-shadow-size)),
+    calc(100% - var(--scroll-shadow-size) - var(--scroll-shadow-offset))
+      calc(100% - var(--scroll-shadow-offset));
+}
+@keyframes scroll-shadow-start-fade {
+  0% {
+    --scroll-shadow-start-fade: 0px;
+  }
+  to {
+    --scroll-shadow-start-fade: var(--scroll-shadow-size);
+  }
+}
+@keyframes scroll-shadow-end-fade {
+  0% {
+    --scroll-shadow-end-fade: var(--scroll-shadow-size);
+  }
+  to {
+    --scroll-shadow-end-fade: 0px;
+  }
+}
+
+/* ---------- DateRangePicker ---------- */
+.date-range-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+/* 触发器是 RAC Button（不带 .button 类），须自带弹性盒：文字靠左、清除按钮
+   与绝对定位的日历图标靠右（styles.css 的 space-between 依赖这一点）。 */
+.date-range-picker__trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  padding-right: 26px;
+}
+/* 与 styles.css 的 .request-log-filters 覆盖同用 inset-block + auto 外边距居中；
+   不可再叠 translateY(-50%)，否则图标会被抬起半个高度。 */
+.date-range-picker__trigger-indicator {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 8px;
+  margin-block: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--muted-3);
+  pointer-events: none;
+}
+.date-range-picker__range-separator {
+  padding: 0 4px;
+  color: var(--muted-3);
+}
+
+/* ---------- RangeCalendar ---------- */
+.range-calendar {
+  outline: none;
+}
+.range-calendar__header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px;
+  padding-bottom: 12px;
+}
+/* 本应用把月份标题放在各自月列的上方（不在 header 行内），故不做 flex 拉伸，
+   只保留居中与到网格的下间距。 */
+.range-calendar__heading {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--ink-heading);
+}
+.range-calendar__nav-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--muted);
+  cursor: pointer;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+}
+.range-calendar__nav-button:hover {
+  color: var(--ink-body);
+  background: var(--hover-fill);
+}
+.range-calendar__grid {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 2px;
+}
+.range-calendar__header-cell {
+  padding-bottom: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  color: var(--muted);
+}
+.range-calendar__cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  min-width: 30px;
+  font-size: 12px;
+  color: var(--ink-body);
+  cursor: pointer;
+  user-select: none;
+  border-radius: 8px;
+  outline: none;
+}
+.range-calendar__cell[data-disabled="true"],
+.range-calendar__cell[data-unavailable="true"],
+.range-calendar__cell[data-outside-month="true"] {
+  color: var(--faint-3);
+  cursor: default;
+}
+.range-calendar__cell[data-today="true"] {
+  font-weight: 700;
+  color: var(--accent-mark);
+}
+.range-calendar__cell[data-selected="true"] {
+  font-weight: 600;
+  color: var(--selected-ink);
+  background: var(--selected-bg);
+}
+/* 区间中段：浅底覆盖实心（同特异性，须在实心规则之后）。 */
+.range-calendar__cell[data-range-middle="true"] {
+  font-weight: 400;
+  color: var(--ink-body);
+  background: color-mix(in srgb, var(--selected-bg) 12%, transparent);
+  border-radius: 0;
+}
+.range-calendar__cell[data-focused="true"] {
+  outline: 2px solid color-mix(in srgb, var(--accent-mark) 55%, transparent);
+  outline-offset: -2px;
+}
+.range-calendar__cell-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+.range-calendar__cell-indicator {
+  width: 4px;
+  height: 4px;
+  margin-top: 1px;
+  background: var(--muted-3);
+  border-radius: 50%;
+}
+
+/* ---------- Pagination ----------
+   上游的 .pagination 是整块根节点（含 summary, w-full + space-between）；本应用
+   把“第 x / y 页”放在 .request-log-pagination 容器里，故根节点只保留横向排列。
+   尺寸沿用 .button--sm 的紧凑语汇（上游的 size-9/8/7 偏大）。 ---------- */
+.pagination {
+  display: flex;
+  align-items: center;
+}
+.pagination__content {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pagination__item {
+  display: inline-flex;
+}
+.pagination__link,
+.pagination__ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--ink-body);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  user-select: none;
+}
+.pagination__ellipsis {
+  color: var(--muted-3);
+}
+.pagination__link {
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+/* 当前页保持实心，故 hover/active 排除它（它们的特异性更高）。 */
+.pagination__link:hover:not(:disabled):not([data-active="true"]) {
+  background: var(--hover-fill);
+}
+.pagination__link:active:not(:disabled):not([data-active="true"]) {
+  background: var(--hover-fill-strong);
+}
+/* 当前页沿用 app 的实心选中语汇（同 .button--primary / 侧栏选中项）。 */
+.pagination__link[data-active="true"] {
+  color: var(--selected-ink);
+  background: var(--selected-bg);
+}
+.pagination__link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-mark) 55%, transparent);
+  outline-offset: 1px;
+}
+.pagination__link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* 上一页 / 下一页：图标按钮，宽度随内容（上游 w-auto px-2.5）。 */
+.pagination__link--nav {
+  width: auto;
+  padding: 0 6px;
+}
+.pagination--sm .pagination__link,
+.pagination--sm .pagination__ellipsis {
+  width: 24px;
+  height: 24px;
+  font-size: 11.5px;
+}
+.pagination--sm .pagination__link--nav {
+  width: auto;
+  padding: 0 4px;
+}
+.pagination--lg .pagination__link,
+.pagination--lg .pagination__ellipsis {
+  width: 32px;
+  height: 32px;
+  font-size: 13px;
+}
+.pagination--lg .pagination__link--nav {
+  width: auto;
+  padding: 0 8px;
+}

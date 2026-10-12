@@ -324,7 +324,7 @@ func TestResponsesMergesParallelToolCalls(t *testing.T) {
 }
 
 // 同一轮既有正文又有 tool_calls 时，必须合成一条 assistant 消息。拆成
-//「先正文、后调用」两条会让上游看到一个没有调用就结束的回合，模型会模仿
+// 「先正文、后调用」两条会让上游看到一个没有调用就结束的回合，模型会模仿
 // 这个模式只说「我这就去改」然后停下。
 func TestResponsesMergesTextWithToolCalls(t *testing.T) {
 	s, _, captured := responsesFixture(t, func(w http.ResponseWriter, r *http.Request) {
@@ -336,7 +336,7 @@ func TestResponsesMergesTextWithToolCalls(t *testing.T) {
 		"model":"codex-model",
 		"input":[
 			{"type":"message","role":"user","content":[{"type":"input_text","text":"fix it"}]},
-			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"现在写入两处。"}]},
+				{"type":"message","role":"assistant","content":[{"type":"output_text","text":"现在写入两处。 <tool_call>ignored</tool_call>"}]},
 			{"type":"function_call","name":"shell","arguments":"{\"command\":\"ls\"}","call_id":"call_1"},
 			{"type":"function_call_output","call_id":"call_1","output":"a.txt"}
 		],
@@ -361,6 +361,9 @@ func TestResponsesMergesTextWithToolCalls(t *testing.T) {
 	}
 	if !strings.Contains(string(merged.Content), "现在写入两处") {
 		t.Fatalf("text lost in merge: %+v", merged)
+	}
+	if strings.Contains(string(merged.Content), "<tool_call") {
+		t.Fatalf("raw tool call kept in history: %s", merged.Content)
 	}
 	if !strings.Contains(string(merged.ToolCalls), `"call_1"`) {
 		t.Fatalf("tool_calls lost in merge: %+v", merged)
@@ -436,6 +439,69 @@ func TestResponsesDeclaresTextItemBeforeDeltas(t *testing.T) {
 	}
 	if starts != 1 {
 		t.Fatalf("message item declared %d times, want 1: %v", starts, eventTypes(payloads))
+	}
+}
+
+// 上游偶发把原生 tool_calls 又重复写进正文。正文标记必须在流式阶段扣住，
+// 否则 Codex 会把它当普通文本显示，并污染后续 assistant 历史。
+func TestResponsesDropsDuplicateRawToolCallFromText(t *testing.T) {
+	s, _, _ := responsesFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		textFrame := func(content string) string {
+			payload, _ := json.Marshal(map[string]any{
+				"choices": []any{map[string]any{"delta": map[string]any{"content": content}}},
+			})
+			return "data: " + string(payload)
+		}
+		for _, frame := range []string{
+			textFrame("说完了。<tool_"),
+			textFrame("call>RAW_TOOL_CALL"),
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_7","function":{"name":"write_stdin","arguments":"{\"session_id\":17694}"}}]}}]}`,
+			`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+			`data: [DONE]`,
+		} {
+			_, _ = io.WriteString(w, frame+"\n\n")
+			flusher.Flush()
+		}
+	})
+
+	response := postResponses(t, s, `{"model":"codex-model","stream":true,"input":[]}`)
+	payloads := ssePayloads(t, response.Body.String())
+
+	var streamed strings.Builder
+	var completed map[string]any
+	for _, payload := range payloads {
+		if payload["type"] == "response.output_text.delta" {
+			streamed.WriteString(payload["delta"].(string))
+		}
+		if payload["type"] == "response.completed" {
+			completed = payload
+		}
+	}
+	if streamed.String() != "说完了。" {
+		t.Fatalf("streamed text = %q, events = %v", streamed.String(), eventTypes(payloads))
+	}
+	if completed == nil {
+		t.Fatalf("no completed response: %v", eventTypes(payloads))
+	}
+
+	output := completed["response"].(map[string]any)["output"].([]any)
+	foundCall := false
+	for _, raw := range output {
+		item := raw.(map[string]any)
+		if item["type"] == "message" {
+			text := item["content"].([]any)[0].(map[string]any)["text"].(string)
+			if text != "说完了。" {
+				t.Fatalf("message text = %q", text)
+			}
+		}
+		if item["type"] == "function_call" && item["name"] == "write_stdin" {
+			foundCall = true
+		}
+	}
+	if !foundCall {
+		t.Fatalf("native tool call missing: %v", output)
 	}
 }
 
@@ -533,6 +599,50 @@ func TestResponsesLengthFinishReportsIncomplete(t *testing.T) {
 	details := envelope["incomplete_details"].(map[string]any)
 	if details["reason"] != "max_output_tokens" {
 		t.Fatalf("incomplete reason = %v", details["reason"])
+	}
+}
+
+// 上游把补全拦下来（finish_reason=content_filter）时必须以 incomplete 收尾：回
+// response.completed 等于告诉 Codex「任务完成」，而实际上模型一个字都没回答。
+func TestResponsesContentFilterReportsIncompleteAndLogsFailure(t *testing.T) {
+	s, tracker, _ := responsesFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		for _, frame := range []string{
+			`data: {"choices":[{"delta":{"content":"blocked"}}]}`,
+			`data: {"choices":[{"delta":{},"finish_reason":"content_filter"}],"usage":{"prompt_tokens":7,"completion_tokens":2}}`,
+			`data: [DONE]`,
+		} {
+			_, _ = io.WriteString(w, frame+"\n\n")
+			flusher.Flush()
+		}
+	})
+
+	response := postResponses(t, s, `{"model":"codex-model","stream":true,"input":[]}`)
+	body := response.Body.String()
+	if strings.Contains(body, `"type":"response.completed"`) {
+		t.Fatalf("content_filter must not report completion: %s", body)
+	}
+	payloads := ssePayloads(t, body)
+	last := payloads[len(payloads)-1]
+	if last["type"] != "response.incomplete" {
+		t.Fatalf("last event = %v: %v", last["type"], eventTypes(payloads))
+	}
+	envelope := last["response"].(map[string]any)
+	details := envelope["incomplete_details"].(map[string]any)
+	if details["reason"] != "content_filter" {
+		t.Fatalf("incomplete reason = %v", details["reason"])
+	}
+
+	logs, err := tracker.ListRequestLogs(1, 20, usage.RequestLogFilter{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs.Items) != 1 {
+		t.Fatalf("want 1 logged request, got %d", len(logs.Items))
+	}
+	if logs.Items[0].Success || !strings.Contains(logs.Items[0].ErrorMessage, "content_filter") {
+		t.Fatalf("filtered turn logged as successful: %+v", logs.Items[0])
 	}
 }
 
